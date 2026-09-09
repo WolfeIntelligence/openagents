@@ -27,11 +27,14 @@ import {
 } from "@/lib/types";
 
 const CATALOG_ROOT = path.join(process.cwd(), "catalog");
+const BUILD_TIME = new Date().toISOString();
 
 interface StatsFile {
   downloads?: number;
   stars?: number;
   featured?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 interface OwnerFile {
@@ -118,8 +121,17 @@ function loadPackage(owner: string, name: string, pkgPath: string): Package | nu
 
   const stats = readJsonSafe<StatsFile>(path.join(pkgPath, ".stats.json")) ?? {};
 
-  const createdAt = new Date(Math.min(...mtimes)).toISOString();
-  const updatedAt = new Date(Math.max(...mtimes)).toISOString();
+  // Deployed bundles (e.g. Vercel) normalize file mtimes to a bogus epoch, so
+  // prefer explicit dates from .stats.json and fall back to build time when the
+  // filesystem dates look fake.
+  const buildTime = BUILD_TIME;
+  const plausible = (ms: number) => ms > Date.UTC(2020, 0, 1);
+  const createdAt =
+    stats.createdAt ??
+    (plausible(Math.min(...mtimes)) ? new Date(Math.min(...mtimes)).toISOString() : buildTime);
+  const updatedAt =
+    stats.updatedAt ??
+    (plausible(Math.max(...mtimes)) ? new Date(Math.max(...mtimes)).toISOString() : buildTime);
 
   const pkg: Package = {
     id: `${owner}/${name}`,
@@ -128,7 +140,7 @@ function loadPackage(owner: string, name: string, pkgPath: string): Package | nu
     manifest,
     readme,
     files,
-    versions: [{ version: manifest.version, publishedAt: manifestStat.mtime.toISOString() }],
+    versions: [{ version: manifest.version, publishedAt: updatedAt }],
     stats: {
       downloads: stats.downloads ?? 0,
       stars: stats.stars ?? 0,
