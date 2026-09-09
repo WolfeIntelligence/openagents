@@ -1,0 +1,35 @@
+schema: 1
+name: agent-guardrails
+owner: openagents
+version: 1.0.0
+kind: harness
+title: Agent Guardrails
+summary: Pre-action checks for destructive ops, budget/turn limits, confirmation gates, and a structured audit log
+license: MIT
+tags: [safety, guardrails, harness, audit-log, autonomy]
+runtimes: [claude-code, codex, openai-agents, langgraph, generic]
+pricing:
+  model: free
+  amount_cents: 0
+  currency: usd
+entry: HARNESS.md
+files:
+  - HARNESS.md
+  - policies/destructive-actions.md
+  - audit-log.schema.json
+inputs:
+  - name: max_turns
+    type: number
+    required: false
+    default: 50
+    description: Maximum agent turns/tool-call rounds before the harness halts and asks for continuation
+  - name: budget_usd
+    type: number
+    required: false
+    description: Optional soft budget ceiling (in USD of estimated token spend) before the harness halts and asks for continuation
+  - name: audit_log_path
+    type: path
+    required: false
+    default: ".openagents/audit.log.jsonl"
+    description: Where to append structured audit log entries (JSON Lines, one object per action)
+requires: []

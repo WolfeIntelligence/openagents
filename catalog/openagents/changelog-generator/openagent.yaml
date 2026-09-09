@@ -1,0 +1,33 @@
+schema: 1
+name: changelog-generator
+owner: openagents
+version: 1.1.0
+kind: workflow
+title: Changelog Generator
+summary: Turns a git log range into a grouped CHANGELOG entry with breaking changes called out and links to issues/PRs
+license: MIT
+tags: [changelog, git, release, documentation, automation]
+runtimes: [claude-code, codex, generic]
+pricing:
+  model: free
+  amount_cents: 0
+  currency: usd
+entry: WORKFLOW.md
+files:
+  - WORKFLOW.md
+inputs:
+  - name: from_ref
+    type: string
+    required: true
+    description: Starting git ref (exclusive), e.g. the previous release tag "v1.2.0"
+  - name: to_ref
+    type: string
+    required: false
+    default: HEAD
+    description: Ending git ref (inclusive)
+  - name: version
+    type: string
+    required: false
+    description: Version label for the new changelog section, e.g. "1.3.0"; if omitted, left as "Unreleased"
+requires:
+  - openagents/commit-conventions@^1

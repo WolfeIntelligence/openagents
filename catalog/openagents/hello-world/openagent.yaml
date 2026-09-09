@@ -1,0 +1,26 @@
+schema: 1
+name: hello-world
+owner: openagents
+version: 1.0.0
+kind: workflow
+title: Hello World
+summary: A minimal workflow that greets you, inspects the repo, and summarizes it.
+license: MIT
+tags: [starter, example, onboarding]
+runtimes: [claude-code, cursor, codex, openai-agents, langgraph, generic]
+pricing:
+  model: free
+  amount_cents: 0
+  currency: usd
+entry: WORKFLOW.md
+files:
+  - WORKFLOW.md
+inputs:
+  - name: name
+    type: string
+    required: false
+    description: Name to greet. Defaults to "there".
+    default: there
+requires: []
+homepage: https://github.com/openagents-hq/openagents
+repository: https://github.com/openagents-hq/openagents

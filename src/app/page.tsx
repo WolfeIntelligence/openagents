@@ -1,69 +1,159 @@
-import Image from "next/image";
+import Link from "next/link";
+import { getCatalog } from "@/lib/catalog";
+import { PACKAGE_KINDS } from "@/lib/types";
+import { KIND_META } from "@/lib/runtimes";
+import { PackageCard } from "@/components/PackageCard";
+import { SearchBox } from "@/components/SearchBox";
+import { CopyButton } from "@/components/CopyButton";
+import { EmptyState } from "@/components/EmptyState";
 
-export default function Home() {
+const INSTALL_SNIPPET = "npx openagents add openagents/pr-reviewer";
+
+const STEPS = [
+  {
+    title: "Find",
+    description: "Search or browse workflows, harnesses, rules, and skills built by the community.",
+  },
+  {
+    title: "Install",
+    description: "Run one command. OpenAgents drops the package into the right place for your runtime.",
+  },
+  {
+    title: "Run in your agent",
+    description: "Claude Code, Cursor, Codex, and other agent runtimes pick it up automatically.",
+  },
+];
+
+export default async function HomePage() {
+  const catalog = await getCatalog();
+  const [featured, kindCounts] = await Promise.all([
+    catalog.featured(6),
+    Promise.all(
+      PACKAGE_KINDS.map(async (kind) => {
+        const page = await catalog.list({ kind, limit: 1 });
+        return [kind, page.total] as const;
+      }),
+    ),
+  ]);
+  const counts = Object.fromEntries(kindCounts);
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
+    <div>
+      {/* Hero */}
+      <section className="border-b border-border">
+        <div className="mx-auto max-w-4xl px-4 py-20 text-center sm:px-6 lg:px-8">
+          <h1 className="text-4xl font-bold tracking-tight text-fg sm:text-5xl">
+            The open marketplace for agentic workflows
           </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+          <p className="mx-auto mt-4 max-w-2xl text-lg text-fg-muted">
+            Find, install, and publish workflows, harnesses, rules, and skills for Claude Code,
+            Cursor, Codex, and any agent runtime.
           </p>
+
+          <div className="mx-auto mt-8 max-w-xl">
+            <SearchBox size="lg" placeholder="Search “pr review”, “commit messages”, “rag harness”…" />
+          </div>
+
+          <div className="mx-auto mt-6 flex max-w-xl items-center justify-between gap-3 rounded-lg border border-border bg-surface px-4 py-3">
+            <code className="overflow-x-auto whitespace-pre font-mono text-sm text-fg">
+              {INSTALL_SNIPPET}
+            </code>
+            <CopyButton value={INSTALL_SNIPPET} />
+          </div>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+      </section>
+
+      {/* Kind tiles */}
+      <section className="mx-auto max-w-7xl px-4 py-14 sm:px-6 lg:px-8">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {PACKAGE_KINDS.map((kind) => {
+            const meta = KIND_META[kind];
+            return (
+              <Link
+                key={kind}
+                href={`/explore?kind=${kind}`}
+                className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-5 transition-colors hover:border-border-strong hover:bg-surface-hover"
+              >
+                <span className="text-xs font-mono text-fg-subtle">
+                  {(counts[kind] ?? 0).toLocaleString()} packages
+                </span>
+                <h3 className="text-base font-semibold text-fg">{meta?.label ?? kind}</h3>
+                <p className="text-sm text-fg-muted">{meta?.description}</p>
+              </Link>
+            );
+          })}
         </div>
-      </main>
+      </section>
+
+      {/* Featured */}
+      <section className="mx-auto max-w-7xl px-4 py-4 sm:px-6 lg:px-8">
+        <div className="mb-5 flex items-center justify-between">
+          <h2 className="text-xl font-semibold text-fg">Featured packages</h2>
+          <Link href="/explore" className="text-sm font-medium text-accent hover:text-accent-hover">
+            Browse all →
+          </Link>
+        </div>
+        {featured.length > 0 ? (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {featured.map((pkg) => (
+              <PackageCard key={pkg.id} pkg={pkg} />
+            ))}
+          </div>
+        ) : (
+          <EmptyState
+            title="No featured packages yet"
+            description="Check back soon, or browse the full catalog."
+            action={
+              <Link
+                href="/explore"
+                className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg hover:bg-accent-hover"
+              >
+                Explore packages
+              </Link>
+            }
+          />
+        )}
+      </section>
+
+      {/* How it works */}
+      <section className="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8">
+        <h2 className="mb-8 text-xl font-semibold text-fg">How it works</h2>
+        <div className="grid grid-cols-1 gap-6 sm:grid-cols-3">
+          {STEPS.map((step, i) => (
+            <div key={step.title} className="flex flex-col gap-2">
+              <span className="flex h-8 w-8 items-center justify-center rounded-full border border-accent-border bg-accent-muted font-mono text-sm font-semibold text-accent">
+                {i + 1}
+              </span>
+              <h3 className="text-base font-semibold text-fg">{step.title}</h3>
+              <p className="text-sm text-fg-muted">{step.description}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Publish CTA */}
+      <section className="border-t border-border">
+        <div className="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8">
+          <div className="rounded-xl border border-border bg-surface p-8 sm:p-10">
+            <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <h2 className="text-xl font-semibold text-fg">Publish yours</h2>
+                <p className="mt-2 max-w-xl text-sm text-fg-muted">
+                  Free packages are always free to publish and free to install — no platform fee,
+                  ever. Charge for a package and keep 90% of every sale; OpenAgents takes a 10%
+                  platform fee to cover payments and hosting.
+                </p>
+              </div>
+              <Link
+                href="/publish"
+                className="inline-flex w-fit shrink-0 items-center justify-center rounded-md bg-accent px-5 py-2.5 text-sm font-medium text-accent-fg hover:bg-accent-hover"
+              >
+                Start publishing
+              </Link>
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
   );
 }

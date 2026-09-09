@@ -1,0 +1,29 @@
+schema: 1
+name: repo-onboarding
+owner: openagents
+version: 1.0.0
+kind: workflow
+title: Repo Onboarding
+summary: Map an unfamiliar codebase into an architecture summary, entrypoints, conventions, and run/test instructions
+license: MIT
+tags: [onboarding, documentation, architecture, exploration]
+runtimes: [claude-code, cursor, codex, openai-agents, generic]
+pricing:
+  model: free
+  amount_cents: 0
+  currency: usd
+entry: WORKFLOW.md
+files:
+  - WORKFLOW.md
+inputs:
+  - name: root_dir
+    type: path
+    required: false
+    default: "."
+    description: Root directory of the repository to map
+  - name: depth
+    type: string
+    required: false
+    default: standard
+    description: "How deep to go: quick | standard | deep"
+requires: []

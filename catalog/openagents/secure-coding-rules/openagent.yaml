@@ -1,0 +1,20 @@
+schema: 1
+name: secure-coding-rules
+owner: openagents
+version: 1.3.0
+kind: rules
+title: Secure Coding Rules
+summary: CLAUDE.md-style rules for secrets, input validation, authz, dependency hygiene, and PII logging
+license: MIT
+tags: [security, rules, secrets, authz, owasp, compliance]
+runtimes: [claude-code, cursor, codex, openai-agents, langgraph, generic]
+pricing:
+  model: free
+  amount_cents: 0
+  currency: usd
+entry: RULES.md
+files:
+  - RULES.md
+  - checklists/owasp-quick.md
+inputs: []
+requires: []

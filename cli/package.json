@@ -1,0 +1,35 @@
+{
+  "name": "openagents",
+  "version": "0.1.0",
+  "description": "CLI for the OpenAgents marketplace: install, search, and publish agentic workflows, harnesses, rules, and skills.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "bin": {
+    "openagents": "bin/openagents.js"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "README.md"
+  ],
+  "keywords": [
+    "openagents",
+    "cli",
+    "agents",
+    "claude-code",
+    "cursor",
+    "codex",
+    "marketplace"
+  ],
+  "homepage": "https://openagents.vercel.app",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/openagents/openagents"
+  },
+  "dependencies": {
+    "tar": "^7.4.3"
+  }
+}

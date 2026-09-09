@@ -1,0 +1,34 @@
+schema: 1
+name: test-writer-loop
+owner: openagents
+version: 1.1.0
+kind: harness
+title: Test Writer Loop
+summary: Red/green loop that picks an untested module, writes a failing test, implements it, and iterates with coverage deltas
+license: MIT
+tags: [testing, tdd, coverage, harness, automation]
+runtimes: [claude-code, codex, openai-agents, generic]
+pricing:
+  model: free
+  amount_cents: 0
+  currency: usd
+entry: HARNESS.md
+files:
+  - HARNESS.md
+  - loop.md
+  - stop-conditions.md
+inputs:
+  - name: target_path
+    type: path
+    required: false
+    description: File or directory to focus on; if omitted, the loop selects the lowest-coverage module automatically
+  - name: max_iterations
+    type: number
+    required: false
+    default: 10
+    description: Maximum red/green cycles to run in one session
+  - name: coverage_command
+    type: string
+    required: false
+    description: "Command that prints a coverage report (e.g. \"npm test -- --coverage\"); auto-detected when omitted"
+requires: []

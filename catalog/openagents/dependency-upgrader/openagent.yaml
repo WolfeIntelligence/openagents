@@ -1,0 +1,33 @@
+schema: 1
+name: dependency-upgrader
+owner: openagents
+version: 1.0.0
+kind: workflow
+title: Dependency Upgrader
+summary: Audits outdated dependencies, upgrades in risk order, runs tests after each, and opens one PR per major bump
+license: MIT
+tags: [dependencies, upgrades, security, automation, maintenance]
+runtimes: [claude-code, codex, generic]
+pricing:
+  model: free
+  amount_cents: 0
+  currency: usd
+entry: WORKFLOW.md
+files:
+  - WORKFLOW.md
+inputs:
+  - name: package_manager
+    type: string
+    required: false
+    description: "npm | yarn | pnpm | pip | poetry | cargo | go; auto-detected from manifest files when omitted"
+  - name: include_major
+    type: boolean
+    required: false
+    default: true
+    description: Whether to include major (breaking-possible) version bumps, each as its own PR
+  - name: max_prs
+    type: number
+    required: false
+    default: 5
+    description: Cap on how many upgrade PRs to open in one run
+requires: []

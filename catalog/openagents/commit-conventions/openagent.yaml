@@ -1,0 +1,20 @@
+schema: 1
+name: commit-conventions
+owner: openagents
+version: 1.0.0
+kind: rules
+title: Commit Conventions
+summary: Conventional Commits, branch naming, and a PR description template as standing rules
+license: MIT
+tags: [git, conventions, commits, pull-requests, rules]
+runtimes: [claude-code, cursor, codex, generic]
+pricing:
+  model: free
+  amount_cents: 0
+  currency: usd
+entry: RULES.md
+files:
+  - RULES.md
+  - templates/pr.md
+inputs: []
+requires: []

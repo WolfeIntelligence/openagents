@@ -1,0 +1,35 @@
+schema: 1
+name: pr-reviewer
+owner: openagents
+version: 1.2.0
+kind: workflow
+title: Pull Request Reviewer
+summary: Structured PR review with risk classification, a correctness/security/test/perf checklist, and severity-tagged output
+license: MIT
+tags: [code-review, github, quality, security, testing]
+runtimes: [claude-code, cursor, codex, generic]
+pricing:
+  model: free
+  amount_cents: 0
+  currency: usd
+entry: WORKFLOW.md
+files:
+  - WORKFLOW.md
+  - rules/review-checklist.md
+  - templates/review-comment.md
+inputs:
+  - name: pr_ref
+    type: string
+    required: true
+    description: PR number, branch name, or commit range to review (e.g. "123", "feature/x", "main..HEAD")
+  - name: base_ref
+    type: string
+    required: false
+    default: main
+    description: Base branch/ref to diff against when pr_ref is not already a range
+  - name: post_comments
+    type: boolean
+    required: false
+    default: false
+    description: Whether to post inline comments to the PR (requires explicit user confirmation) vs. print a local report only
+requires: []

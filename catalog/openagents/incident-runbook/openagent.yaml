@@ -1,0 +1,33 @@
+schema: 1
+name: incident-runbook
+owner: openagents
+version: 1.0.0
+kind: workflow
+title: Incident Runbook
+summary: Triage, mitigate, communicate, and postmortem for production incidents, with timers and escalation rules
+license: MIT
+tags: [incident-response, oncall, reliability, postmortem, ops]
+runtimes: [claude-code, codex, generic]
+pricing:
+  model: free
+  amount_cents: 0
+  currency: usd
+entry: WORKFLOW.md
+files:
+  - WORKFLOW.md
+  - templates/postmortem.md
+  - templates/status-update.md
+inputs:
+  - name: severity
+    type: string
+    required: true
+    description: "Initial severity estimate: sev1 (critical, full outage) | sev2 (major, degraded) | sev3 (minor, limited impact)"
+  - name: incident_channel
+    type: string
+    required: false
+    description: Chat channel or thread to post status updates to, if applicable
+  - name: escalation_contact
+    type: string
+    required: false
+    description: Who/what to page if the incident is not mitigated within the severity's escalation window
+requires: []

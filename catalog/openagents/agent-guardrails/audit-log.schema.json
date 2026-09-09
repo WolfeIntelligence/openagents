@@ -1,0 +1,70 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://openagents.dev/schemas/agent-guardrails/audit-log-entry.json",
+  "title": "Agent Guardrails Audit Log Entry",
+  "description": "One JSON object per line (JSON Lines) appended to audit_log_path for every reversible-write or destructive action, and optionally sampled read-only actions.",
+  "type": "object",
+  "required": ["timestamp", "classification", "action", "target", "description", "outcome"],
+  "properties": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 UTC timestamp of when the action was attempted."
+    },
+    "classification": {
+      "type": "string",
+      "enum": ["read-only", "reversible-write", "destructive"],
+      "description": "Risk classification per policies/destructive-actions.md."
+    },
+    "action": {
+      "type": "string",
+      "description": "Tool or action name, e.g. \"delete_file\", \"http_post\", \"git_push_force\"."
+    },
+    "target": {
+      "type": "string",
+      "description": "The resource acted on: file path, URL, database table, resource id, etc."
+    },
+    "description": {
+      "type": "string",
+      "description": "Short human-readable summary of what the action did or attempted to do."
+    },
+    "outcome": {
+      "type": "string",
+      "enum": ["executed", "declined", "failed"],
+      "description": "Whether the action ran successfully, was declined at the confirmation gate, or failed."
+    },
+    "error": {
+      "type": "string",
+      "description": "Error message when outcome is \"failed\". Omitted otherwise."
+    },
+    "confirmation": {
+      "type": "object",
+      "description": "Required when classification is \"destructive\" and outcome is \"executed\" or \"declined\".",
+      "properties": {
+        "confirmed_by": {
+          "type": "string",
+          "description": "Identifier of the human operator who confirmed or declined the action."
+        },
+        "confirmed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "blast_radius": {
+          "type": "string",
+          "description": "Stated scope of impact shown to the operator at confirmation time, e.g. \"340 rows in orders table\"."
+        }
+      },
+      "required": ["confirmed_by", "confirmed_at"]
+    },
+    "turn_number": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The harness turn count at the time of this action, for correlating with max_turns."
+    },
+    "session_id": {
+      "type": "string",
+      "description": "Identifier for the agent session/run this entry belongs to."
+    }
+  },
+  "additionalProperties": false
+}
