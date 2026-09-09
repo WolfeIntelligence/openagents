@@ -104,10 +104,13 @@ export async function createCheckoutSession({
 }
 
 /** Creates (if needed) a Stripe Express account for the user and returns an onboarding
- *  link URL. Throws if Stripe/DB aren't configured. */
+ *  link URL. `refreshUrl` is where Stripe sends the user back if the link itself expired
+ *  (defaults to `returnUrl` when omitted); `returnUrl` is where they land after completing
+ *  (or exiting) the flow. Throws if Stripe/DB aren't configured. */
 export async function createConnectOnboardingLink(
   userId: string,
-  returnUrl: string
+  returnUrl: string,
+  refreshUrl: string = returnUrl
 ): Promise<{ url: string }> {
   const stripe = getStripe();
   const db = getDb();
@@ -128,7 +131,7 @@ export async function createConnectOnboardingLink(
 
   const link = await stripe.accountLinks.create({
     account: accountId,
-    refresh_url: returnUrl,
+    refresh_url: refreshUrl,
     return_url: returnUrl,
     type: "account_onboarding",
   });

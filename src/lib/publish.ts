@@ -4,7 +4,7 @@
 
 import { and, eq } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
-import { packageFiles, packages, packageVersions } from "@/lib/db/schema";
+import { packageFiles, packages, packageVersions, users } from "@/lib/db/schema";
 import { ManifestError, parseManifest, validateManifestFiles } from "@/lib/manifest";
 
 export interface PublishFile {
@@ -55,6 +55,19 @@ export async function publishPackage({ userHandle, files }: PublishArgs): Promis
     throw new PublishError(400, [
       `manifest owner "${manifest.owner}" does not match your handle "${userHandle}"`,
     ]);
+  }
+
+  if (manifest.pricing.model !== "free") {
+    const [seller] = await db
+      .select({ stripeOnboarded: users.stripeOnboarded })
+      .from(users)
+      .where(eq(users.handle, userHandle))
+      .limit(1);
+    if (!seller?.stripeOnboarded) {
+      throw new PublishError(400, [
+        "Connect Stripe payouts before publishing a paid package (Settings → Payouts).",
+      ]);
+    }
   }
 
   const fileErrors = validateManifestFiles(

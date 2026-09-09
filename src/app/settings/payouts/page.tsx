@@ -1,0 +1,285 @@
+import Link from "next/link";
+import { redirect } from "next/navigation";
+import type { Metadata } from "next";
+import type { ReactNode } from "react";
+import { and, eq } from "drizzle-orm";
+import { auth } from "@/lib/auth";
+import { getDb, isDbEnabled } from "@/lib/db/client";
+import { getStripe, isStripeEnabled, PLATFORM_FEE_BPS } from "@/lib/stripe";
+import { packages, purchases, users } from "@/lib/db/schema";
+import { ConnectStripeButton } from "@/components/ConnectStripeButton";
+
+export const metadata: Metadata = {
+  title: "Payouts",
+  description: "Manage your Stripe Connect payout account and view your sales.",
+};
+
+interface PayoutsPageProps {
+  searchParams: Promise<{ connected?: string; refresh?: string }>;
+}
+
+interface SaleRow {
+  packageId: string;
+  owner: string;
+  name: string;
+  title: string;
+  count: number;
+  grossCents: number;
+}
+
+function formatMoney(cents: number, currency = "usd"): string {
+  return (cents / 100).toLocaleString(undefined, {
+    style: "currency",
+    currency: currency.toUpperCase(),
+  });
+}
+
+export default async function PayoutsPage({ searchParams }: PayoutsPageProps) {
+  const { connected, refresh } = await searchParams;
+
+  const session = await auth();
+  if (!session?.user?.id) {
+    redirect("/signin?callbackUrl=/settings/payouts");
+  }
+
+  const dbEnabled = isDbEnabled();
+  const stripeEnabled = isStripeEnabled();
+  const db = getDb();
+
+  if (!dbEnabled || !db || !stripeEnabled) {
+    return (
+      <PageShell>
+        <div className="rounded-lg border border-dashed border-border p-6 text-center">
+          <p className="text-sm text-fg-muted">
+            Payments are not configured on this deployment.
+          </p>
+          <p className="mt-2 text-xs text-fg-subtle">
+            Set <code className="font-mono">DATABASE_URL</code> and{" "}
+            <code className="font-mono">STRIPE_SECRET_KEY</code> — see{" "}
+            <code className="font-mono">docs/SETUP.md</code>.
+          </p>
+        </div>
+      </PageShell>
+    );
+  }
+
+  const [user] = await db.select().from(users).where(eq(users.id, session.user.id)).limit(1);
+  if (!user) {
+    return (
+      <PageShell>
+        <p className="text-sm text-fg-muted">We couldn&apos;t find your account. Try signing in again.</p>
+      </PageShell>
+    );
+  }
+
+  // The webhook (account.updated) is the source of truth long-term, but it may not have
+  // arrived yet when Stripe bounces the user straight back here — refresh eagerly so the
+  // page is accurate immediately after onboarding completes.
+  if (connected === "1" && user.stripeAccountId) {
+    const stripe = getStripe();
+    if (stripe) {
+      try {
+        const account = await stripe.accounts.retrieve(user.stripeAccountId);
+        const onboarded = Boolean(account.charges_enabled && account.details_submitted);
+        if (onboarded !== user.stripeOnboarded) {
+          await db.update(users).set({ stripeOnboarded: onboarded }).where(eq(users.id, user.id));
+          user.stripeOnboarded = onboarded;
+        }
+      } catch {
+        // Stripe lookup failed — fall back to whatever's already in the DB.
+      }
+    }
+  }
+
+  let sales: SaleRow[] = [];
+  if (user.handle) {
+    const rows = await db
+      .select({
+        packageId: packages.id,
+        owner: packages.owner,
+        name: packages.name,
+        title: packages.title,
+        amountCents: purchases.amountCents,
+      })
+      .from(purchases)
+      .innerJoin(packages, eq(purchases.packageId, packages.id))
+      .where(and(eq(packages.owner, user.handle), eq(purchases.status, "paid")));
+
+    const byPackage = new Map<string, SaleRow>();
+    for (const row of rows) {
+      const existing = byPackage.get(row.packageId);
+      if (existing) {
+        existing.count += 1;
+        existing.grossCents += row.amountCents;
+      } else {
+        byPackage.set(row.packageId, {
+          packageId: row.packageId,
+          owner: row.owner,
+          name: row.name,
+          title: row.title,
+          count: 1,
+          grossCents: row.amountCents,
+        });
+      }
+    }
+    sales = Array.from(byPackage.values()).sort((a, b) => b.grossCents - a.grossCents);
+  }
+
+  const creatorShare = (10000 - PLATFORM_FEE_BPS) / 10000;
+  const totalGross = sales.reduce((sum, s) => sum + s.grossCents, 0);
+  const totalNet = Math.round(totalGross * creatorShare);
+
+  return (
+    <PageShell>
+      {connected === "1" && user.stripeOnboarded && (
+        <Banner tone="accent">Stripe onboarding complete — payouts are active.</Banner>
+      )}
+      {refresh === "1" && (
+        <Banner tone="warning">That onboarding link expired. Start again below.</Banner>
+      )}
+
+      <div className="mt-6 rounded-lg border border-border p-6">
+        {!user.stripeAccountId ? (
+          <NotConnected />
+        ) : !user.stripeOnboarded ? (
+          <NotOnboarded />
+        ) : (
+          <Onboarded accountId={user.stripeAccountId} />
+        )}
+      </div>
+
+      <div className="mt-10">
+        <h2 className="text-lg font-semibold text-fg">Your sales</h2>
+        {sales.length === 0 ? (
+          <p className="mt-2 text-sm text-fg-muted">
+            No paid packages sold yet.
+          </p>
+        ) : (
+          <>
+            <div className="mt-4 overflow-x-auto rounded-lg border border-border">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border bg-surface text-left">
+                    <th className="px-4 py-2 font-medium text-fg-muted">Package</th>
+                    <th className="px-4 py-2 font-medium text-fg-muted">Sales</th>
+                    <th className="px-4 py-2 font-medium text-fg-muted">Gross</th>
+                    <th className="px-4 py-2 font-medium text-fg-muted">Your net (90%)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sales.map((s) => (
+                    <tr key={s.packageId} className="border-b border-border last:border-0">
+                      <td className="px-4 py-2">
+                        <Link
+                          href={`/p/${s.owner}/${s.name}`}
+                          className="font-mono text-accent hover:text-accent-hover"
+                        >
+                          {s.owner}/{s.name}
+                        </Link>
+                      </td>
+                      <td className="px-4 py-2 font-mono text-fg">{s.count.toLocaleString()}</td>
+                      <td className="px-4 py-2 font-mono text-fg">{formatMoney(s.grossCents)}</td>
+                      <td className="px-4 py-2 font-mono text-fg">
+                        {formatMoney(Math.round(s.grossCents * creatorShare))}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="mt-3 text-sm text-fg-muted">
+              Total: <span className="font-mono text-fg">{formatMoney(totalGross)}</span> gross,{" "}
+              <span className="font-mono text-fg">{formatMoney(totalNet)}</span> net across{" "}
+              {sales.reduce((n, s) => n + s.count, 0).toLocaleString()} sale(s).
+            </p>
+          </>
+        )}
+      </div>
+    </PageShell>
+  );
+}
+
+function PageShell({ children }: { children: ReactNode }) {
+  return (
+    <div className="mx-auto max-w-4xl px-4 py-10 sm:px-6 lg:px-8">
+      <h1 className="text-2xl font-semibold text-fg">Payouts</h1>
+      <p className="mt-2 max-w-2xl text-sm text-fg-muted">
+        Manage the Stripe Express account that receives your share of paid package sales.
+      </p>
+      {children}
+    </div>
+  );
+}
+
+function Banner({ tone, children }: { tone: "accent" | "warning"; children: ReactNode }) {
+  const toneClasses =
+    tone === "accent"
+      ? "border-accent-border bg-accent-muted text-fg"
+      : "border-warning/40 bg-warning/10 text-fg";
+  return (
+    <div className={`mt-6 rounded-lg border p-4 text-sm ${toneClasses}`}>{children}</div>
+  );
+}
+
+function NotConnected() {
+  return (
+    <div>
+      <h2 className="text-base font-semibold text-fg">Connect Stripe to get paid</h2>
+      <p className="mt-1.5 max-w-xl text-sm text-fg-muted">
+        Paid packages are sold through Stripe Connect Express. Buyers pay by card at
+        checkout; Stripe pays your share out to your bank on its usual payout schedule. You
+        keep 90% of every sale — OpenAgents takes a 10% platform fee. Connecting takes a
+        couple of minutes: Stripe collects your business details and bank account, then
+        sends you back here.
+      </p>
+      <div className="mt-4">
+        <ConnectStripeButton label="Connect Stripe" />
+      </div>
+    </div>
+  );
+}
+
+function NotOnboarded() {
+  return (
+    <div>
+      <h2 className="text-base font-semibold text-fg">Finish onboarding</h2>
+      <p className="mt-1.5 max-w-xl text-sm text-fg-muted">
+        You started connecting Stripe but haven&apos;t finished onboarding yet — Stripe still
+        needs a few more details before it can pay you out. Pick up where you left off.
+      </p>
+      <div className="mt-4">
+        <ConnectStripeButton label="Finish onboarding" />
+      </div>
+    </div>
+  );
+}
+
+function Onboarded({ accountId }: { accountId: string }) {
+  const masked = `••••${accountId.slice(-4)}`;
+  return (
+    <div>
+      <div className="flex items-center gap-2">
+        <span className="h-2 w-2 rounded-full bg-accent" aria-hidden="true" />
+        <h2 className="text-base font-semibold text-accent">Payouts active</h2>
+      </div>
+      <dl className="mt-3 flex flex-col gap-1.5 text-sm">
+        <div className="flex justify-between gap-4">
+          <dt className="text-fg-muted">Stripe account</dt>
+          <dd className="font-mono text-fg">{masked}</dd>
+        </div>
+      </dl>
+      <p className="mt-3 max-w-xl text-sm text-fg-muted">
+        Payout timing, bank details, and tax forms are managed in your{" "}
+        <a
+          href="https://dashboard.stripe.com/express"
+          target="_blank"
+          rel="noreferrer noopener"
+          className="text-accent hover:text-accent-hover"
+        >
+          Stripe Express dashboard
+        </a>
+        , not here.
+      </p>
+    </div>
+  );
+}

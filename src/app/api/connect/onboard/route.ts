@@ -17,7 +17,8 @@ export async function POST(req: NextRequest) {
   try {
     const { url } = await createConnectOnboardingLink(
       session.user.id,
-      `${siteUrl}/settings/payments`
+      `${siteUrl}/settings/payouts?connected=1`,
+      `${siteUrl}/settings/payouts?refresh=1`
     );
     return NextResponse.json({ url });
   } catch (err) {

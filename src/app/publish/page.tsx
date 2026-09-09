@@ -49,7 +49,11 @@ export default async function PublishPage() {
         A package is a directory containing an <code className="font-mono">openagent.yaml</code>{" "}
         manifest, a <code className="font-mono">README.md</code>, and any number of files. Free
         packages are always free to publish. Paid packages keep a 90% creator share after the 10%
-        platform fee.
+        platform fee — connect a payout account first at{" "}
+        <Link href="/settings/payouts" className="text-accent hover:text-accent-hover">
+          Settings → Payouts
+        </Link>
+        .
       </p>
 
       <div className="mt-6 overflow-hidden rounded-lg border border-border">

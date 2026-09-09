@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import {
   useRef,
   useState,
@@ -132,6 +133,14 @@ export function PublishForm() {
               <li key={i}>{err}</li>
             ))}
           </ul>
+          {errors.some((err) => /stripe payouts/i.test(err)) && (
+            <Link
+              href="/settings/payouts"
+              className="mt-2 inline-flex text-sm font-medium text-accent hover:text-accent-hover"
+            >
+              Go to Settings → Payouts
+            </Link>
+          )}
         </div>
       )}
 

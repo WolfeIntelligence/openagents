@@ -35,6 +35,18 @@ export function UserMenu({ name, image, handle }: UserMenuProps) {
         )}
         <span className="font-mono text-fg-muted">{handle}</span>
       </Link>
+      <Link
+        href="/purchases"
+        className="rounded-md border border-border px-2.5 py-1.5 text-sm text-fg-muted hover:border-border-strong hover:text-fg"
+      >
+        Purchases
+      </Link>
+      <Link
+        href="/settings/payouts"
+        className="rounded-md border border-border px-2.5 py-1.5 text-sm text-fg-muted hover:border-border-strong hover:text-fg"
+      >
+        Payouts
+      </Link>
       <form action={handleSignOut}>
         <button
           type="submit"
