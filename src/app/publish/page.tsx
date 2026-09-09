@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { Metadata } from "next";
-import { auth, isAuthEnabled, signIn } from "@/lib/auth";
+import { auth, isAuthEnabled } from "@/lib/auth";
 import { isDbEnabled } from "@/lib/db/client";
 import { PublishForm } from "@/components/PublishForm";
 import { CopyButton } from "@/components/CopyButton";
@@ -36,11 +36,6 @@ inputs:
 requires:
   - openagents/base-rules@^1
 `;
-
-async function handleSignIn() {
-  "use server";
-  await signIn("github");
-}
 
 export default async function PublishPage() {
   const authEnabled = isAuthEnabled();
@@ -102,16 +97,14 @@ export default async function PublishPage() {
 
         {!authEnabled || !session?.user ? (
           <div className="mt-4 rounded-lg border border-dashed border-border p-6 text-center">
-            <p className="text-sm text-fg-muted">Sign in with GitHub to upload a package.</p>
+            <p className="text-sm text-fg-muted">Sign in to upload a package.</p>
             {authEnabled ? (
-              <form action={handleSignIn} className="mt-3 flex justify-center">
-                <button
-                  type="submit"
-                  className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-fg hover:bg-accent-hover"
-                >
-                  Sign in with GitHub
-                </button>
-              </form>
+              <Link
+                href="/signin?callbackUrl=/publish"
+                className="mt-3 inline-flex rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-fg hover:bg-accent-hover"
+              >
+                Sign in
+              </Link>
             ) : (
               <p className="mt-2 text-xs text-fg-subtle">
                 Sign-in is not configured on this deployment.

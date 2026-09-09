@@ -43,18 +43,47 @@ packages with the bundled seed catalog; when unset, only the seed catalog is ser
 Run migrations with Drizzle (`drizzle.config.ts` at the repo root) before the first
 deploy with a database attached.
 
-### Auth.js (GitHub OAuth) — enables sign-in, publishing, stars
+### Auth.js (GitHub and/or Google OAuth) — enables sign-in, publishing, stars
 
 | Variable | Description |
 |---|---|
-| `AUTH_SECRET` | Random 32+ byte secret signing session/JWT cookies. Generate with `npx auth secret` or `openssl rand -base64 33`. |
+| `AUTH_SECRET` | Random 32+ byte secret signing session/JWT cookies. Generate with `npx auth secret` or `openssl rand -base64 33`. Shared by both providers. |
 | `AUTH_GITHUB_ID` | GitHub OAuth App client id. |
 | `AUTH_GITHUB_SECRET` | GitHub OAuth App client secret. |
+| `AUTH_GOOGLE_ID` | Google OAuth client id. |
+| `AUTH_GOOGLE_SECRET` | Google OAuth client secret. |
 
-Create the OAuth App at [github.com/settings/developers](https://github.com/settings/developers)
-with an **Authorization callback URL** of
-`<NEXT_PUBLIC_SITE_URL>/api/auth/callback/github`. Without all three set, the sign-in
-UI renders a "not configured" state rather than a broken button.
+Each provider is independent — set `AUTH_SECRET` plus either provider's pair, or both
+pairs, to enable sign-in. The `/signin` page shows a button per fully-configured
+provider, and a "not configured" state when neither is set.
+
+#### GitHub
+
+1. Go to [github.com/settings/developers](https://github.com/settings/developers) →
+   **Developer settings** → **OAuth Apps** → **New OAuth App**.
+2. **Homepage URL**: your site's URL, e.g. `https://openagents-nu.vercel.app` (or
+   `http://localhost:3000` for local dev).
+3. **Authorization callback URL**: exactly
+   `https://openagents-nu.vercel.app/api/auth/callback/github` (or
+   `http://localhost:3000/api/auth/callback/github` for local dev).
+4. Copy the **Client ID** / **Client Secret** into `AUTH_GITHUB_ID` / `AUTH_GITHUB_SECRET`.
+
+#### Google
+
+1. Go to the [Google Cloud Console](https://console.cloud.google.com/) → **APIs &
+   Services** → **Credentials** → **Create Credentials** → **OAuth client ID**.
+2. Configure the **OAuth consent screen** if prompted: user type **External**, and the
+   `email` / `profile` scopes.
+3. Create an **OAuth client ID** of type **Web application**.
+4. **Authorized redirect URIs**: add exactly
+   `https://openagents-nu.vercel.app/api/auth/callback/google` (and
+   `http://localhost:3000/api/auth/callback/google` for local dev).
+5. Copy the **Client ID** / **Client secret** into `AUTH_GOOGLE_ID` / `AUTH_GOOGLE_SECRET`.
+
+A signed-in user's handle (`session.user.handle`, stored on `users.handle` when the DB
+is enabled) comes from their GitHub login, or — for Google — a slug derived from their
+email local-part (lowercased, sanitized to `[a-z0-9-]`, deduplicated with a `-2`, `-3`,
+... suffix on collision).
 
 ### Stripe Connect — enables paid packages and checkout
 
@@ -96,7 +125,7 @@ layering on database/auth/payments.
 |---|---|
 | Just the free catalog, browsable and installable via CLI | nothing |
 | Community members can publish free packages too, tracked in a DB instead of only via PR | `DATABASE_URL` |
-| Sign-in, stars, creator profiles | + `AUTH_SECRET`, `AUTH_GITHUB_ID`, `AUTH_GITHUB_SECRET` |
+| Sign-in, stars, creator profiles | + `AUTH_SECRET`, and `AUTH_GITHUB_ID`/`AUTH_GITHUB_SECRET` and/or `AUTH_GOOGLE_ID`/`AUTH_GOOGLE_SECRET` |
 | Paid packages, Stripe Connect payouts | + `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` |
 
 Each tier is additive — nothing above it is required to run the tier below it, and

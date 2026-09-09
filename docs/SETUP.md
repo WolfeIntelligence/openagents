@@ -24,22 +24,51 @@ go — the app re-detects what's configured on each request, no build-time flag 
 Once `DATABASE_URL` is set, the catalog automatically merges DB packages with the seed
 catalog, and `/api/v1/publish` starts working.
 
-## 2. GitHub OAuth (Auth.js)
+## 2. Sign-in (Auth.js) — GitHub and/or Google
 
-1. Go to https://github.com/settings/developers → **New OAuth App**.
-2. **Homepage URL**: your site's URL (e.g. `https://openagents.example.com`, or
-   `http://localhost:3000` for local dev).
-3. **Authorization callback URL**: `<site-url>/api/auth/callback/github`.
-4. Copy the generated **Client ID** and **Client Secret** into `AUTH_GITHUB_ID` /
-   `AUTH_GITHUB_SECRET`.
-5. Generate `AUTH_SECRET`:
+`AUTH_SECRET` is shared by both providers; enable either provider by setting its two
+client env vars, or enable both. The sign-in page (`/signin`) shows one button per
+provider that's fully configured, and a "not configured" state if neither is.
+
+Production example host: `https://openagents-nu.vercel.app`. For local dev, use
+`http://localhost:3000`.
+
+1. Generate `AUTH_SECRET`:
    ```
    npx auth secret
    ```
-   or `openssl rand -base64 33`, and set it too.
+   or `openssl rand -base64 33`, and set it.
 
-With all three set, sign-in is enabled; a user's GitHub login becomes their handle
-(`session.user.handle`, stored on `users.handle` when the DB is enabled).
+### GitHub
+
+1. Go to https://github.com/settings/developers → **Developer settings** → **OAuth
+   Apps** → **New OAuth App**.
+2. **Homepage URL**: your site's URL, e.g. `https://openagents-nu.vercel.app`
+   (or `http://localhost:3000` for local dev).
+3. **Authorization callback URL**: `https://openagents-nu.vercel.app/api/auth/callback/github`
+   (or `http://localhost:3000/api/auth/callback/github` for local dev).
+4. Copy the generated **Client ID** and **Client Secret** into `AUTH_GITHUB_ID` /
+   `AUTH_GITHUB_SECRET`.
+
+### Google
+
+1. Go to https://console.cloud.google.com/ → **APIs & Services** → **Credentials** →
+   **Create Credentials** → **OAuth client ID**.
+2. If prompted, configure the **OAuth consent screen** first: choose **External**,
+   fill in the required app fields, and add the `email` and `profile` scopes (both are
+   included by default under "Non-sensitive scopes").
+3. Back in **Credentials**, create an **OAuth client ID** of type **Web application**.
+4. **Authorized redirect URIs**: add exactly
+   `https://openagents-nu.vercel.app/api/auth/callback/google`
+   (and `http://localhost:3000/api/auth/callback/google` for local dev).
+5. Copy the generated **Client ID** and **Client secret** into `AUTH_GOOGLE_ID` /
+   `AUTH_GOOGLE_SECRET`.
+
+With `AUTH_SECRET` and at least one provider's pair set, sign-in is enabled. A signed-in
+user's handle (`session.user.handle`, stored on `users.handle` when the DB is enabled)
+comes from their GitHub login, or — for Google — a slug derived from their email
+local-part (lowercased, non `[a-z0-9-]` characters replaced with `-`, deduplicated with
+a `-2`, `-3`, ... suffix on collision).
 
 ## 3. Stripe Connect + webhook
 

@@ -48,3 +48,8 @@ drizzle/
 
 .vercel
 .env*
+
+# Vendor agent skills installed by `vercel integration add`
+.agents/
+.claude/skills/
+skills-lock.json
