@@ -142,32 +142,35 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         ]
       : []),
   ],
-  callbacks: {
-    // Persist a provider-derived handle on the DB user record so it survives across
-    // sessions/devices and can be used for owner checks in publish.ts.
-    // GitHub -> the GitHub login. Google -> slugified email local-part, deduped.
+  // Persist a provider-derived handle on the DB user record so it survives across
+  // sessions/devices and can be used for owner checks in publish.ts.
+  // GitHub -> the GitHub login (lowercased). Google -> slugified email local-part, deduped.
+  // This lives in `events.signIn` rather than `callbacks.signIn` because, with a database
+  // adapter, the callback runs BEFORE a first-time user row exists (user.id is still the
+  // provider's id there), so an update from the callback matches nothing.
+  events: {
     async signIn({ user, account, profile }) {
-      if (dbEnabled && db && profile && user.id) {
-        if (account?.provider === "github") {
-          const login = (profile as { login?: string }).login;
-          if (login) {
-            await db.update(users).set({ handle: login }).where(eq(users.id, user.id));
-          }
-        } else if (account?.provider === "google") {
-          const email = (profile as { email?: string }).email;
-          if (email) {
-            const handle = await deriveGoogleHandle(email, user.id, db);
-            await db.update(users).set({ handle }).where(eq(users.id, user.id));
-          }
+      if (!dbEnabled || !db || !profile || !user.id) return;
+      if (account?.provider === "github") {
+        const login = (profile as { login?: string }).login;
+        if (login) {
+          await db.update(users).set({ handle: login.toLowerCase() }).where(eq(users.id, user.id));
+        }
+      } else if (account?.provider === "google") {
+        const email = (profile as { email?: string }).email;
+        if (email) {
+          const handle = await deriveGoogleHandle(email, user.id, db);
+          await db.update(users).set({ handle }).where(eq(users.id, user.id));
         }
       }
-      return true;
     },
+  },
+  callbacks: {
     // JWT-mode: stash the derived handle on first sign-in so it's available on session.
     async jwt({ token, profile, account }) {
       if (account?.provider === "github" && profile) {
         const login = (profile as { login?: string }).login;
-        if (login) token.handle = login;
+        if (login) token.handle = login.toLowerCase();
       } else if (account?.provider === "google" && profile) {
         const email = (profile as { email?: string }).email;
         if (email) token.handle = await deriveGoogleHandle(email, undefined, null);
