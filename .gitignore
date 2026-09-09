@@ -53,3 +53,10 @@ drizzle/
 .agents/
 .claude/skills/
 skills-lock.json
+
+# local scratch (one-off repair/inspection scripts)
+.tmp/
+
+# temporary env pulls (e.g. `vercel env pull` for one-off smoke tests) — already covered
+# by `.env*` above, listed explicitly for clarity
+.env*.tmp

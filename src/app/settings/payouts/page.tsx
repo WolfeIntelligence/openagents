@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { and, eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { getDb, isDbEnabled } from "@/lib/db/client";
-import { getStripe, isStripeEnabled, PLATFORM_FEE_BPS } from "@/lib/stripe";
+import { getConnectedAccountStatus, isStripeEnabled, PLATFORM_FEE_BPS } from "@/lib/stripe";
 import { packages, purchases, users } from "@/lib/db/schema";
 import { ConnectStripeButton } from "@/components/ConnectStripeButton";
 
@@ -72,22 +72,19 @@ export default async function PayoutsPage({ searchParams }: PayoutsPageProps) {
     );
   }
 
-  // The webhook (account.updated) is the source of truth long-term, but it may not have
-  // arrived yet when Stripe bounces the user straight back here — refresh eagerly so the
-  // page is accurate immediately after onboarding completes.
+  // The webhook (v2 thin events for the recipient capability / requirements) is the
+  // source of truth long-term, but it may not have arrived yet when Stripe bounces the
+  // user straight back here — refresh eagerly so the page is accurate immediately after
+  // onboarding completes.
   if (connected === "1" && user.stripeAccountId) {
-    const stripe = getStripe();
-    if (stripe) {
-      try {
-        const account = await stripe.accounts.retrieve(user.stripeAccountId);
-        const onboarded = Boolean(account.charges_enabled && account.details_submitted);
-        if (onboarded !== user.stripeOnboarded) {
-          await db.update(users).set({ stripeOnboarded: onboarded }).where(eq(users.id, user.id));
-          user.stripeOnboarded = onboarded;
-        }
-      } catch {
-        // Stripe lookup failed — fall back to whatever's already in the DB.
+    try {
+      const status = await getConnectedAccountStatus(user.stripeAccountId);
+      if (status.onboarded !== user.stripeOnboarded) {
+        await db.update(users).set({ stripeOnboarded: status.onboarded }).where(eq(users.id, user.id));
+        user.stripeOnboarded = status.onboarded;
       }
+    } catch {
+      // Stripe lookup failed — fall back to whatever's already in the DB.
     }
   }
 

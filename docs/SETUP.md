@@ -72,8 +72,14 @@ a `-2`, `-3`, ... suffix on collision).
 
 ## 3. Stripe Connect + webhook
 
+Connect accounts are created with **Stripe Accounts v2** (`stripe.v2.core.accounts`, a
+`recipient` configuration with the `stripe_balance.stripe_transfers` capability
+requested, `dashboard: "express"`) — v1 Accounts (`stripe.accounts.create`) are no
+longer accepted for new Connect integrations. See
+https://docs.stripe.com/connect/accounts-v2/account-creation.
+
 1. Create/use a Stripe account, enable **Connect** (Dashboard → Connect → Get started;
-   Express accounts are what `createConnectOnboardingLink` creates).
+   Express-dashboard recipient accounts are what `createConnectOnboardingLink` creates).
 2. Copy your **Secret key** (test mode while developing) into `STRIPE_SECRET_KEY`.
 3. Local webhook testing with the Stripe CLI:
    ```
@@ -81,10 +87,18 @@ a `-2`, `-3`, ... suffix on collision).
    ```
    This prints a `whsec_...` value — set that as `STRIPE_WEBHOOK_SECRET`.
    In production, create the webhook endpoint in the Dashboard (Developers → Webhooks →
-   Add endpoint) pointed at `<site-url>/api/webhooks/stripe`, subscribed to
-   `checkout.session.completed` (records purchases) and `account.updated` (flips
-   `users.stripeOnboarded` once a connected seller finishes onboarding), and use the
-   signing secret it gives you.
+   Add endpoint) pointed at `<site-url>/api/webhooks/stripe`, subscribed to:
+   - `checkout.session.completed` (records purchases; v1 snapshot event)
+   - `account.updated` (v1 snapshot event; harmless legacy fallback)
+   - `v2.core.account[configuration.recipient].capability_status_updated` (v2 thin
+     event — recipient's `stripe_balance.stripe_transfers` capability changed status)
+   - `v2.core.account[configuration.recipient].updated` (v2 thin event — recipient
+     configuration changed)
+   - `v2.core.account[requirements].updated` (v2 thin event — outstanding requirements
+     changed)
+
+   The last three flip `users.stripeOnboarded` via `getConnectedAccountStatus` once a
+   connected seller finishes onboarding; use the same signing secret for all of them.
 4. Optional: set `PLATFORM_FEE_BPS` (basis points taken from each sale; default `1000` =
    10%).
 5. Sellers connect their account via `POST /api/connect/onboard` (requires sign-in),
