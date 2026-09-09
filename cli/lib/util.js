@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-export const DEFAULT_REGISTRY = "https://openagents.vercel.app";
+export const DEFAULT_REGISTRY = "https://openagents-nu.vercel.app";
 
 export function registryUrl(flagValue) {
   return (flagValue || process.env.OPENAGENTS_REGISTRY || DEFAULT_REGISTRY).replace(/\/+$/, "");

@@ -29,7 +29,7 @@ openagents add openagents/pr-reviewer --dir ./my-project
 | Flag | Description |
 |---|---|
 | `--runtime <id>` | One of `claude-code`, `cursor`, `codex`, `openai-agents`, `langgraph`, `generic`. Auto-detected when omitted — see [Runtimes](/docs/runtimes). |
-| `--registry <url>` | Registry base URL. Defaults to `OPENAGENTS_REGISTRY` or `https://openagents.vercel.app`. |
+| `--registry <url>` | Registry base URL. Defaults to `OPENAGENTS_REGISTRY` or `https://openagents-nu.vercel.app`. |
 | `--dir <path>` | Project root to install into. Defaults to the current directory. |
 
 Under the hood: `GET /api/v1/packages/{owner}/{name}` for the manifest, then

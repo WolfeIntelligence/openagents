@@ -20,7 +20,7 @@ npx openagents add openagents/pr-reviewer
 ```
 
 This does three things:
-1. Fetches the package manifest from the registry (`https://openagents.vercel.app` by
+1. Fetches the package manifest from the registry (`https://openagents-nu.vercel.app` by
    default).
 2. Downloads the package's files as a tarball.
 3. Extracts them into the right directory for your project's runtime — auto-detected

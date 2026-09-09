@@ -30,7 +30,7 @@ scripts. Four kinds cover everything in the catalog:
 Ten free packages ship bundled with the project under `catalog/openagents/` — PR
 reviewer, repo onboarding, a red/green test-writing loop, secure coding rules, commit
 conventions, a changelog generator, a dependency upgrader, an incident runbook, agent
-guardrails, and a research-brief skill. Browse them at [`/explore`](https://openagents.vercel.app/explore)
+guardrails, and a research-brief skill. Browse them at [`/explore`](https://openagents-nu.vercel.app/explore)
 or list them with the CLI:
 
 ```bash

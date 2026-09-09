@@ -1,6 +1,6 @@
 # openagents
 
-The command-line client for [OpenAgents](https://openagents.vercel.app), an
+The command-line client for [OpenAgents](https://openagents-nu.vercel.app), an
 open-source marketplace for agentic workflows, harnesses, rules, and skills.
 Install packages into your project's runtime (Claude Code, Cursor, Codex CLI,
 OpenAI Agents SDK, LangGraph, or a generic layout), search the catalog, and
@@ -37,7 +37,7 @@ Flags:
   for `.claude/`, `.cursor/`, `.codex/`, `.openai-agents/`, `.langgraph/` in
   the target directory, falling back to `generic`.
 - `--registry <url>` — registry base URL. Defaults to `OPENAGENTS_REGISTRY` or
-  `https://openagents.vercel.app`.
+  `https://openagents-nu.vercel.app`.
 - `--dir <path>` — project root to install into. Defaults to the current
   directory.
 

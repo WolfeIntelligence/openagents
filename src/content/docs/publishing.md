@@ -43,7 +43,7 @@ receive payment.
 
 1. Sign in with GitHub at `/publish` (requires the deployment to have
    `AUTH_GITHUB_ID`/`AUTH_GITHUB_SECRET`/`AUTH_SECRET` configured — see
-   [Self-Hosting](/docs/self-hosting); on `openagents.vercel.app` this is already set
+   [Self-Hosting](/docs/self-hosting); on `openagents-nu.vercel.app` this is already set
    up).
 2. Connect a payout account via **Stripe Connect** (Express accounts) — required
    before a paid package can go live, since checkout needs somewhere to send the

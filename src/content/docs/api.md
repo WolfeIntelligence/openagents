@@ -7,7 +7,7 @@ order: 7
 # API Reference
 
 All endpoints are JSON over HTTPS, unauthenticated for reads. The base URL is your
-deployment's origin (`https://openagents.vercel.app` for the hosted instance, or
+deployment's origin (`https://openagents-nu.vercel.app` for the hosted instance, or
 `OPENAGENTS_REGISTRY` if you're pointing the CLI elsewhere).
 
 Types below are simplified TypeScript shapes; the authoritative types are
@@ -24,7 +24,7 @@ List/filter packages — the same query parameters as [`/explore`](/explore).
 `limit`, `offset`.
 
 ```bash
-curl "https://openagents.vercel.app/api/v1/packages?kind=workflow&price=free&sort=stars&limit=10"
+curl "https://openagents-nu.vercel.app/api/v1/packages?kind=workflow&price=free&sort=stars&limit=10"
 ```
 
 ```ts
@@ -56,7 +56,7 @@ curl "https://openagents.vercel.app/api/v1/packages?kind=workflow&price=free&sor
 Fetch one package: full manifest, README, file list, and version history.
 
 ```bash
-curl "https://openagents.vercel.app/api/v1/packages/openagents/pr-reviewer"
+curl "https://openagents-nu.vercel.app/api/v1/packages/openagents/pr-reviewer"
 ```
 
 ```ts
@@ -84,7 +84,7 @@ Download the package's files as a `.tar.gz`. This is what `openagents add` fetch
 after reading the manifest.
 
 ```bash
-curl -OJ "https://openagents.vercel.app/api/v1/packages/openagents/pr-reviewer/download"
+curl -OJ "https://openagents-nu.vercel.app/api/v1/packages/openagents/pr-reviewer/download"
 ```
 
 Response: `200 OK`, `Content-Type: application/gzip`, a tarball containing every file
@@ -96,7 +96,7 @@ listed in the package's `manifest.files` (plus `openagent.yaml` and `README.md`)
 Full-text search across title, summary, and tags.
 
 ```bash
-curl "https://openagents.vercel.app/api/v1/search?q=code+review"
+curl "https://openagents-nu.vercel.app/api/v1/search?q=code+review"
 ```
 
 ```ts
@@ -122,7 +122,7 @@ env vars.
 Creates a Stripe Checkout session for a paid package purchase.
 
 ```bash
-curl -X POST "https://openagents.vercel.app/api/checkout" \
+curl -X POST "https://openagents-nu.vercel.app/api/checkout" \
   -H "Content-Type: application/json" \
   -d '{"owner": "someone", "name": "their-paid-package"}'
 ```
@@ -155,7 +155,7 @@ the programmatic path for paid packages, and requires an authenticated session w
 connected Stripe account for anything with `pricing.model != "free"`.
 
 ```bash
-curl -X POST "https://openagents.vercel.app/api/v1/publish" \
+curl -X POST "https://openagents-nu.vercel.app/api/v1/publish" \
   -H "Content-Type: application/json" \
   -H "Cookie: <session cookie>" \
   -d '{

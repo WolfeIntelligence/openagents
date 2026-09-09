@@ -27,7 +27,7 @@ Options:
   -v, --version    Show the CLI version
 
 Environment:
-  OPENAGENTS_REGISTRY   Default registry URL (default: https://openagents.vercel.app)
+  OPENAGENTS_REGISTRY   Default registry URL (default: https://openagents-nu.vercel.app)
 
 Runtimes: claude-code, cursor, codex, openai-agents, langgraph, generic
 
