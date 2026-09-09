@@ -45,3 +45,6 @@ next-env.d.ts
 .env.local
 cli/node_modules
 drizzle/
+
+.vercel
+.env*
