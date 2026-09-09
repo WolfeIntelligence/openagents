@@ -16,26 +16,28 @@ export async function packageTarball(pkg: Package, getFile: GetFileFn): Promise<
     new Set<string>(["openagent.yaml", "README.md", pkg.manifest.entry, ...pkg.manifest.files])
   );
 
-  const tarPack = pack();
-
+  // Load every file first, then write all tar entries while a consumer is
+  // already attached. Awaiting each entry before anything reads the stream
+  // deadlocks as soon as the package exceeds the stream's internal buffer.
+  const files: { relPath: string; buf: Buffer }[] = [];
   for (const relPath of relativePaths) {
     const file = await getFile(relPath);
     if (!file || file.content === undefined) continue; // not found / not allowed — skip
-    const buf = Buffer.from(file.content, "utf-8");
-    await new Promise<void>((resolve, reject) => {
-      tarPack.entry({ name: `${prefix}/${relPath}`, size: buf.length }, buf, (err) => {
-        if (err) reject(err);
-        else resolve();
-      });
-    });
+    files.push({ relPath, buf: Buffer.from(file.content, "utf-8") });
   }
 
+  const tarPack = pack();
+  const collected = new Promise<Buffer>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    tarPack.on("data", (chunk) => chunks.push(chunk as Buffer));
+    tarPack.on("end", () => resolve(Buffer.concat(chunks)));
+    tarPack.on("error", reject);
+  });
+
+  for (const { relPath, buf } of files) {
+    tarPack.entry({ name: `${prefix}/${relPath}`, size: buf.length }, buf);
+  }
   tarPack.finalize();
 
-  const chunks: Buffer[] = [];
-  for await (const chunk of tarPack) {
-    chunks.push(chunk as Buffer);
-  }
-  const tarBuffer = Buffer.concat(chunks);
-  return gzipSync(tarBuffer);
+  return gzipSync(await collected);
 }
