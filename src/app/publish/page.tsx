@@ -87,7 +87,7 @@ export default async function PublishPage() {
             <code className="font-mono">catalog/</code> folder on GitHub — no account required.
           </p>
           <a
-            href="https://github.com/openagents"
+            href="https://github.com/WolfeIntelligence/openagents"
             target="_blank"
             rel="noreferrer noopener"
             className="mt-3 inline-flex w-fit items-center rounded-md border border-border px-3 py-1.5 text-sm text-fg hover:border-border-strong"

@@ -41,7 +41,7 @@ npx openagents info openagents/pr-reviewer
 ## Quickstart (development)
 
 ```bash
-git clone https://github.com/openagents/openagents.git
+git clone https://github.com/WolfeIntelligence/openagents/openagents.git
 cd openagents
 npm install
 npm run dev

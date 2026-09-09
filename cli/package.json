@@ -27,7 +27,7 @@
   "homepage": "https://openagents-nu.vercel.app",
   "repository": {
     "type": "git",
-    "url": "https://github.com/openagents/openagents"
+    "url": "https://github.com/WolfeIntelligence/openagents/openagents"
   },
   "dependencies": {
     "tar": "^7.4.3"

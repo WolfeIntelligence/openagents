@@ -25,7 +25,7 @@ export function Footer() {
             Publish
           </Link>
           <a
-            href="https://github.com/openagents"
+            href="https://github.com/WolfeIntelligence/openagents"
             target="_blank"
             rel="noreferrer noopener"
             className="text-fg-muted hover:text-fg"
