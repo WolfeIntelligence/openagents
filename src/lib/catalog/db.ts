@@ -514,7 +514,7 @@ export function createDbCatalog(seed: Catalog): Catalog {
         displayName: dbUser?.name ?? seedCreator?.displayName ?? handle,
         bio: dbUser?.bio ?? seedCreator?.bio,
         avatarUrl: dbUser?.image ?? seedCreator?.avatarUrl,
-        url: seedCreator?.url,
+        url: dbUser?.website ?? seedCreator?.url,
         packageCount: (seedCreator?.packageCount ?? 0) + dbPackageCount,
       };
     },
