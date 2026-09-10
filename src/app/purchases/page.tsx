@@ -8,6 +8,8 @@ import { packages, purchases } from "@/lib/db/schema";
 import { EmptyState } from "@/components/EmptyState";
 import { formatPrice } from "@/lib/format";
 import { PurchaseStatusBadge } from "@/components/PurchaseStatusBadge";
+import { CopyButton } from "@/components/CopyButton";
+import { installCommand } from "@/lib/runtimes";
 
 export const metadata: Metadata = {
   title: "Purchases",
@@ -57,11 +59,13 @@ async function PurchasesTable({
       owner: packages.owner,
       name: packages.name,
       title: packages.title,
+      latestVersion: packages.latestVersion,
       amountCents: purchases.amountCents,
       // Rows written before the column existed carry no currency of their own; the
       // package's current currency is what those were charged in.
       currency: sql<string>`coalesce(${purchases.currency}, ${packages.currency})`,
       status: purchases.status,
+      receiptUrl: purchases.receiptUrl,
       createdAt: purchases.createdAt,
     })
     .from(purchases)
@@ -101,40 +105,66 @@ async function PurchasesTable({
           </tr>
         </thead>
         <tbody>
-          {rows.map((row, i) => (
-            <tr key={i} className="border-b border-border last:border-0">
-              <td className="px-4 py-2">
-                <Link
-                  href={`/p/${row.owner}/${row.name}`}
-                  className="font-mono text-accent hover:text-accent-hover"
-                >
-                  {row.owner}/{row.name}
-                </Link>
-                <span className="ml-2 text-fg-subtle">{row.title}</span>
-              </td>
-              <td className="px-4 py-2 text-fg-muted">
-                {row.createdAt.toLocaleDateString()}
-              </td>
-              <td className="px-4 py-2 font-mono text-fg">
-                {formatPrice(row.amountCents, row.currency)}
-              </td>
-              <td className="px-4 py-2">
-                <PurchaseStatusBadge status={row.status} />
-              </td>
-              <td className="px-4 py-2 text-right">
-                {row.status === "paid" ? (
-                  <a
-                    href={`/api/v1/packages/${row.owner}/${row.name}/download`}
-                    className="font-medium text-accent hover:text-accent-hover"
-                  >
-                    Download
-                  </a>
-                ) : (
-                  <span className="text-fg-subtle">—</span>
-                )}
-              </td>
-            </tr>
-          ))}
+          {rows.map((row, i) => {
+            const reinstall = installCommand(row.owner, row.name);
+            return (
+              <tr key={i} className="border-b border-border last:border-0">
+                <td className="px-4 py-2">
+                  <div className="flex flex-wrap items-baseline gap-2">
+                    <Link
+                      href={`/p/${row.owner}/${row.name}`}
+                      className="font-mono text-accent hover:text-accent-hover"
+                    >
+                      {row.owner}/{row.name}
+                    </Link>
+                    <span className="text-fg-subtle">{row.title}</span>
+                    <span className="font-mono text-xs text-fg-subtle">v{row.latestVersion}</span>
+                  </div>
+                  {row.status === "paid" && (
+                    <div className="mt-1.5 flex items-center gap-1.5">
+                      <code className="overflow-x-auto whitespace-pre rounded bg-bg-elevated px-2 py-1 font-mono text-xs text-fg-muted">
+                        {reinstall}
+                      </code>
+                      <CopyButton value={reinstall} label="Reinstall" />
+                    </div>
+                  )}
+                </td>
+                <td className="px-4 py-2 text-fg-muted">
+                  {row.createdAt.toLocaleDateString()}
+                </td>
+                <td className="px-4 py-2 font-mono text-fg">
+                  {formatPrice(row.amountCents, row.currency)}
+                </td>
+                <td className="px-4 py-2">
+                  <PurchaseStatusBadge status={row.status} />
+                </td>
+                <td className="px-4 py-2 text-right">
+                  {row.status === "paid" ? (
+                    <div className="flex flex-col items-end gap-1">
+                      <a
+                        href={`/api/v1/packages/${row.owner}/${row.name}/download`}
+                        className="font-medium text-accent hover:text-accent-hover"
+                      >
+                        Download
+                      </a>
+                      {row.receiptUrl && (
+                        <a
+                          href={row.receiptUrl}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          className="text-xs text-fg-subtle hover:text-fg"
+                        >
+                          Receipt
+                        </a>
+                      )}
+                    </div>
+                  ) : (
+                    <span className="text-fg-subtle">—</span>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
