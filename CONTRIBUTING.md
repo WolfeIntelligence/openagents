@@ -36,6 +36,11 @@ dates and the editorial `featured` flag — never download or star counts, which
 counters in the database and only ever move because someone downloaded or starred the
 package.
 
+`npm run check:catalog` (also run in CI) enforces that this actually happens: it fails
+with a non-zero exit if any `catalog/<owner>/<name>/` directory is missing `.meta.json`,
+or if `.meta.json` exists but `createdAt`/`updatedAt` aren't parsable dates. If you add a
+package and forget to run `sync:meta`, this is what will catch it before merge.
+
 ## Quality bar
 
 A package gets rejected (or sent back for changes) if it's:
@@ -64,11 +69,11 @@ A package gets rejected (or sent back for changes) if it's:
 
 ## Paid packages
 
-Paid packages (`pricing.model` of `one-time` or `subscription`) aren't added via PR to
-`catalog/` — they go through the hosted publish flow (sign-in + Stripe Connect) so
-payouts and the platform fee can be handled. See
+Paid packages (`pricing.model: one-time` — `subscription` is reserved and not yet
+accepted) aren't added via PR to `catalog/` — they go through the hosted publish flow
+(sign-in + Stripe Connect) so payouts and the platform fee can be handled. See
 [`src/content/docs/publishing.md`](./src/content/docs/publishing.md) for the full path
-and review policy.
+and content policy.
 
 ## Code contributions
 

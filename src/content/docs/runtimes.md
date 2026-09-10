@@ -27,20 +27,32 @@ yet.
 
 ## How each runtime picks the files up
 
-- **Claude Code** reads skills from `.claude/skills/<name>/`. The package's `entry`
-  file (by convention `SKILL.md` for `skill`-kind packages, but any kind can be
-  installed here) is what Claude Code loads when the skill is invoked; supporting
-  files (templates, checklists) are referenced by relative path from `entry`.
-- **Cursor** reads project rules from `.cursor/rules/`. Installing a package places its
-  files under `.cursor/rules/<name>/`; reference `entry` from your own Cursor rule
-  configuration if your Cursor version expects a single top-level rules file rather
-  than a subdirectory per package.
-- **Codex CLI** and **OpenAI Agents SDK** projects typically load instruction files
-  explicitly (e.g. via a system prompt include or a tool that reads from disk) — point
-  your project's own bootstrap at `<install-dir>/<entry>`.
+Installing a package copies its files into the table above, then `openagents add`
+writes a runtime-specific **discovery shim** so the target runtime actually finds it —
+a directory of files alone isn't enough for Claude Code or Cursor to notice a package.
+
+- **Claude Code** discovers skills only via a `SKILL.md` with `name`/`description`
+  YAML frontmatter. `add` writes `.claude/skills/<name>/SKILL.md` with frontmatter
+  generated from the manifest (`name`, `description` from `summary`) pointing at
+  `entry` — if `entry` already *is* a bare `SKILL.md` with no frontmatter, the CLI
+  prepends the frontmatter to it instead of creating a second file. After install, `add`
+  prints a hint to restart Claude Code (or reload the window) so it picks up the new
+  skill.
+- **Codex** uses the same `SKILL.md`-with-frontmatter convention as Claude Code; `add`
+  writes it the same way under `.codex/skills/<name>/SKILL.md`.
+- **Cursor** discovers rules only via a top-level `.mdc` file under `.cursor/rules/`.
+  `add` writes `.cursor/rules/<name>.mdc` — a small frontmatter'd rule file that
+  references `@.cursor/rules/<name>/<entry>` — alongside the full package contents at
+  `.cursor/rules/<name>/`, so Cursor's rule index picks it up without needing every
+  supporting file flattened to the top level. `add` prints a hint to check Cursor's
+  rules panel after install.
+- **OpenAI Agents SDK** projects typically load instruction files explicitly (e.g. via
+  a system prompt include or a tool that reads from disk) — point your project's own
+  bootstrap at `<install-dir>/<entry>`. No shim is generated; `add` prints a hint with
+  the exact path to wire in.
 - **LangGraph** graphs commonly load rules/workflow text as a node's system prompt or
   as a tool's documentation — same pattern: read `<install-dir>/<entry>` from wherever
-  your graph is constructed.
+  your graph is constructed. No shim is generated; `add` prints the path.
 - **Generic** (`.openagents/<name>/`) is the runtime-agnostic fallback: a plain
   directory with the manifest and files, for any setup that isn't one of the above
   (a custom harness, a script-based agent, or manual reading by a human). There's no

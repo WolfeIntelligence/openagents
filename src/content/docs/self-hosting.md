@@ -95,15 +95,17 @@ email local-part (lowercased, sanitized to `[a-z0-9-]`, deduplicated with a `-2`
 
 `/api/checkout` and `/api/webhooks/stripe` both return `503 Service Unavailable`
 rather than erroring when `STRIPE_SECRET_KEY` is unset — see [API Reference](/docs/api).
-Creators receive payouts via **Stripe Connect Express accounts**, connected through
-the hosted `/publish` flow; see [Publishing](/docs/publishing) for the fee/review
+Creators receive payouts via **Stripe Connect**, using **Accounts v2**
+(`stripe.v2.core.accounts`, not the legacy v1 Express `stripe.accounts.create`)
+connected through `/api/connect/onboard` from the hosted `/publish` flow or
+`/settings/payouts`; see [Publishing](/docs/publishing) for the fee/content-policy
 details.
 
 ### Site
 
 | Variable | Description |
 |---|---|
-| `NEXT_PUBLIC_SITE_URL` | Public base URL used to build absolute links (Stripe redirect URLs, OAuth callbacks). Defaults to the incoming request's origin when unset — set this explicitly in production for consistent links regardless of which edge region served the request. |
+| `NEXT_PUBLIC_SITE_URL` | Public base URL used to build absolute links: Stripe redirect URLs, OAuth callbacks, and — the canonical URL, sitemap, robots.txt, and `og:image` URLs. When unset, it falls back to the Vercel production deployment URL, and then to `http://localhost:3000` if that isn't available either — so links are still self-consistent on a preview/self-hosted deployment that hasn't set this explicitly, but set it in production so canonical/OG URLs point at your real domain regardless of which edge region or preview alias served the request. |
 
 ## Local development
 
