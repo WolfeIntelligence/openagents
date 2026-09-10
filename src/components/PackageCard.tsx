@@ -53,7 +53,10 @@ export function PackageCard({ pkg }: { pkg: PackageSummary }) {
         {pkg.stats.stars === 0 && pkg.stats.downloads === 0 && (
           <span>Updated {formatUpdated(pkg.updatedAt)}</span>
         )}
-        <span className="ml-auto font-mono">v{pkg.version}</span>
+        <span className="ml-auto flex items-center gap-1.5 font-mono">
+          v{pkg.version}
+          {pkg.license && <span className="text-fg-subtle">&middot; {pkg.license}</span>}
+        </span>
       </div>
     </Link>
   );

@@ -41,7 +41,7 @@ function faq(live: boolean): { q: string; a: string }[] {
 
 const COMPARISON: { feature: string; free: string; paid: string }[] = [
   { feature: "Publish a package", free: "Free", paid: "Free" },
-  { feature: "Install / download", free: "Free", paid: "Buyer pays once (or subscribes)" },
+  { feature: "Install / download", free: "Free", paid: "Buyer pays once" },
   { feature: "Platform fee", free: "None", paid: `${FEE_PERCENT}% of sale price` },
   { feature: "Payment processing", free: "N/A", paid: "Stripe fees apply" },
   { feature: "Creator payout", free: "N/A", paid: `~${CREATOR_PERCENT}% via Stripe Connect` },
@@ -57,8 +57,9 @@ export default function PricingPage() {
     <div className="mx-auto max-w-4xl px-4 py-10 sm:px-6 lg:px-8">
       <h1 className="text-2xl font-semibold text-fg">Pricing</h1>
       <p className="mt-2 max-w-2xl text-sm text-fg-muted">
-        Free packages are free forever — no fees, no catches. Paid packages will carry a{" "}
-        {FEE_PERCENT}% platform fee so we can run payments, hosting, and distribution.
+        Free packages are free forever — no fees, no catches. Paid packages{" "}
+        {paymentsLive ? "carry" : "will carry"} a {FEE_PERCENT}% platform fee so we can run
+        payments, hosting, and distribution.
       </p>
 
       {!paymentsLive && (
@@ -99,7 +100,7 @@ export default function PricingPage() {
             platform fee + Stripe fees, creators keep ~{CREATOR_PERCENT}%
           </p>
           <ul className="mt-4 flex flex-col gap-2 text-sm text-fg-muted">
-            <li>• One-time or subscription pricing</li>
+            <li>• One-time pricing (subscriptions planned)</li>
             <li>• Stripe Connect payouts</li>
             <li>• Buy button on the package page</li>
             <li>• Same distribution as free packages</li>

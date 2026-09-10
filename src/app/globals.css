@@ -14,7 +14,7 @@
   --border-strong: #3f3f46; /* zinc-700 */
   --fg: #fafafa; /* zinc-50 */
   --fg-muted: #a1a1aa; /* zinc-400 */
-  --fg-subtle: #71717a; /* zinc-500 */
+  --fg-subtle: #86868f; /* between zinc-500/400, tuned for >=4.5:1 on bg/surface/bg-elevated */
 
   --accent: #10b981; /* emerald-500 */
   --accent-hover: #34d399; /* emerald-400 */
@@ -38,7 +38,7 @@
     --border-strong: #d4d4d8; /* zinc-300 */
     --fg: #18181b; /* zinc-900 */
     --fg-muted: #52525b; /* zinc-600 */
-    --fg-subtle: #71717a; /* zinc-500 */
+    --fg-subtle: #5c5c66; /* darker than zinc-500 for >=4.5:1 on bg/surface/bg-elevated */
 
     --accent: #059669; /* emerald-600 */
     --accent-hover: #047857; /* emerald-700 */
@@ -103,12 +103,15 @@ body {
 .prose-oa h1,
 .prose-oa h2,
 .prose-oa h3,
-.prose-oa h4 {
+.prose-oa h4,
+.prose-oa h5,
+.prose-oa h6 {
   font-weight: 600;
   line-height: 1.3;
   margin-top: 1.75em;
   margin-bottom: 0.5em;
   color: var(--color-fg);
+  scroll-margin-top: 5rem;
 }
 .prose-oa h1 {
   font-size: 1.5rem;
@@ -122,6 +125,11 @@ body {
 }
 .prose-oa h3 {
   font-size: 1.0625rem;
+}
+.prose-oa h4,
+.prose-oa h5,
+.prose-oa h6 {
+  font-size: 0.9375rem;
 }
 .prose-oa p {
   color: var(--color-fg-muted);

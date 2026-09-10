@@ -1,13 +1,15 @@
 import Link from "next/link";
 import { Logo } from "@/components/Logo";
 import { SearchBox } from "@/components/SearchBox";
-import { UserMenu } from "@/components/UserMenu";
+import { UserMenu, handleSignOut } from "@/components/UserMenu";
 import { NavLinks } from "@/components/NavLinks";
+import { MobileNav } from "@/components/MobileNav";
 import { auth, isAuthEnabled } from "@/lib/auth";
 
 export async function Header() {
   const authEnabled = isAuthEnabled();
   const session = authEnabled ? await auth() : null;
+  const handle = session?.user?.handle;
 
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-bg/85 backdrop-blur supports-[backdrop-filter]:bg-bg/70">
@@ -38,7 +40,7 @@ export async function Header() {
             <UserMenu
               name={session.user.name}
               image={session.user.image}
-              handle={session.user.handle ?? session.user.name ?? "you"}
+              handle={handle}
             />
           ) : (
             <Link
@@ -48,6 +50,12 @@ export async function Header() {
               Sign in
             </Link>
           )}
+          <MobileNav
+            signedIn={Boolean(session?.user)}
+            handle={handle}
+            name={session?.user?.name}
+            onSignOut={session?.user ? handleSignOut : undefined}
+          />
         </div>
       </div>
 
