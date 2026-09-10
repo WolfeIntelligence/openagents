@@ -1,16 +1,17 @@
-import { registryUrl, splitPackageRef, fetchJson } from "../util.js";
+import { registryUrl, splitPackageRef, fetchJson, existsSync } from "../util.js";
+import { detectRuntime } from "../runtimes.js";
 
 export async function run(args) {
   const ref = args._[0];
   if (!ref) {
-    console.error("✗ usage: openagents info <owner/name> [--registry <url>]");
+    console.error("✗ usage: openagents info <owner/name[@version]> [--registry <url>] [--json]");
     process.exitCode = 1;
     return;
   }
 
-  let owner, name;
+  let owner, name, version;
   try {
-    ({ owner, name } = splitPackageRef(ref));
+    ({ owner, name, version } = splitPackageRef(ref));
   } catch (err) {
     console.error(`✗ ${err.message}`);
     process.exitCode = 1;
@@ -18,9 +19,10 @@ export async function run(args) {
   }
 
   const registry = registryUrl(args.registry);
+  const runtime = detectRuntime(process.cwd(), existsSync);
   let pkg;
   try {
-    pkg = await fetchJson(`${registry}/api/v1/packages/${owner}/${name}`);
+    pkg = await fetchJson(`${registry}/api/v1/packages/${owner}/${name}`, { runtime });
   } catch (err) {
     console.error(`✗ could not fetch package: ${err.message}`);
     process.exitCode = 1;
@@ -28,7 +30,20 @@ export async function run(args) {
   }
 
   const m = pkg.manifest || pkg;
+
+  if (args.json) {
+    console.log(JSON.stringify(pkg, null, 2));
+    if (version && version !== m.version) {
+      console.error(`(note: version pinning isn't supported by this registry yet; showing latest, ${m.version})`);
+    }
+    return;
+  }
+
   const stats = pkg.stats || {};
+
+  if (version && version !== m.version) {
+    console.log(`Note: version pinning isn't supported by this registry yet; showing latest (${m.version}).\n`);
+  }
 
   console.log(`${m.title || `${owner}/${name}`}  (${owner}/${name}@${m.version})`);
   console.log(`${m.summary || ""}`);

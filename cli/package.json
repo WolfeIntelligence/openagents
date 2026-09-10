@@ -1,6 +1,6 @@
 {
   "name": "openagents",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "CLI for the OpenAgents marketplace: install, search, and publish agentic workflows, harnesses, rules, and skills.",
   "type": "module",
   "license": "MIT",
@@ -9,6 +9,9 @@
   },
   "bin": {
     "openagents": "bin/openagents.js"
+  },
+  "scripts": {
+    "test": "node --test"
   },
   "files": [
     "bin",
