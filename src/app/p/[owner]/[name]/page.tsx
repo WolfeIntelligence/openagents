@@ -187,7 +187,16 @@ export default async function PackagePage({
               <FilesTab owner={owner} name={name} files={pkg.files} canReadFile={access.canReadFile} />
             )}
             {activeTab === "manifest" && <ManifestTab manifest={manifest} />}
-            {activeTab === "versions" && <VersionsTab versions={pkg.versions} />}
+            {activeTab === "versions" && (
+              <VersionsTab
+                owner={owner}
+                name={name}
+                entry={manifest.entry}
+                canDownload={owns}
+                canReadEntry={access.canReadFile(manifest.entry)}
+                versions={pkg.versions}
+              />
+            )}
           </div>
         </div>
 
@@ -439,8 +448,22 @@ function ManifestTab({
 }
 
 function VersionsTab({
+  owner,
+  name,
+  entry,
+  canDownload,
+  canReadEntry,
   versions,
 }: {
+  owner: string;
+  name: string;
+  /** `manifest.entry` — used for the per-version "Files" link (S4/G-V1). */
+  entry: string;
+  /** Whether the viewer may fetch a tarball at all (paywall gate). */
+  canDownload: boolean;
+  /** Whether the viewer may read `entry` specifically (preview paths on a
+   *  paid package stay readable even when `canDownload` is false). */
+  canReadEntry: boolean;
   versions: { version: string; publishedAt: string; changelog?: string }[];
 }) {
   if (versions.length === 0) {
@@ -457,6 +480,30 @@ function VersionsTab({
             </span>
           </div>
           {v.changelog && <p className="mt-1.5 text-sm text-fg-muted">{v.changelog}</p>}
+          {/* Per-version actions (S4/G-V1). The Files link points at the raw-file
+              API rather than the file-viewer page — that page is owned by
+              another workstream and doesn't take a `?version=` param yet. */}
+          <div className="mt-2 flex flex-wrap items-center gap-3 text-xs">
+            {canDownload && (
+              <a
+                href={`/api/v1/packages/${owner}/${name}/versions/${v.version}/download`}
+                className="font-medium text-accent hover:underline"
+              >
+                Download
+              </a>
+            )}
+            {canReadEntry && (
+              <a
+                href={`/api/v1/packages/${owner}/${name}/files/${entry}?version=${v.version}`}
+                className="text-fg-muted hover:text-fg hover:underline"
+              >
+                Files
+              </a>
+            )}
+          </div>
+          <p className="mt-2 rounded-md bg-surface-hover px-2 py-1 font-mono text-xs text-fg-muted">
+            npx openagents add {owner}/{name}@{v.version}
+          </p>
         </li>
       ))}
     </ul>
