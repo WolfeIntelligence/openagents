@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { getCatalog } from "@/lib/catalog";
 import { auth } from "@/lib/auth";
+import { getRequester, hasScope } from "@/lib/requester";
 import { isDbEnabled } from "@/lib/db/client";
 import { error, json, preflight } from "@/lib/api";
 import { getStatsFor, isStarred, toggleStar } from "@/lib/stats";
@@ -75,12 +76,15 @@ export async function POST(
     return error(404, `package not found: ${owner}/${name}`);
   }
 
-  const session = await auth();
-  if (!session?.user?.id) {
+  const requester = await getRequester(request);
+  if (!requester) {
     return error(401, "sign in to star a package");
   }
+  if (!hasScope(requester, "star")) {
+    return error(403, "insufficient scope");
+  }
 
-  const result = await toggleStar(session.user.id, owner, name);
+  const result = await toggleStar(requester.id, owner, name);
   if (!result) {
     return error(503, "stars are unavailable right now");
   }
