@@ -15,13 +15,16 @@
 import fs from "node:fs";
 import path from "node:path";
 import { parseManifest, validateManifestFiles } from "@/lib/manifest";
-import { matchesTerms, rankByQuery, tokenize } from "@/lib/search";
+import { buildCorrectedQuery, buildVocabulary, matchesTerms, rankByQuery, tokenize } from "@/lib/search";
 import {
+  PACKAGE_KINDS,
+  RUNTIME_IDS,
   toSummary,
   type Catalog,
   type CatalogPage,
   type CatalogQuery,
   type Creator,
+  type FacetCounts,
   type Package,
   type PackageFile,
   type PackageSummary,
@@ -226,33 +229,80 @@ function normalizeRelativePath(input: string): string | null {
   return cleaned || null;
 }
 
+/** Search fields for `matchesTerms`/typo-correction — the one place that
+ *  decides which columns a query term can hit, so `list()` and its retry
+ *  pass can't quietly disagree with each other. */
+function fieldsOf(p: PackageSummary): string[] {
+  return [p.title, p.summary, p.name, p.owner, ...p.tags];
+}
+
+type FacetDimension = "kind" | "runtime" | "price" | "tag" | "owner";
+
+/** Applies every non-`q` filter in `query`, optionally skipping one dimension
+ *  — used both by `list()` (skip nothing) and `facets()` (skip the dimension
+ *  being counted, so a facet's own filter never zeroes out its own count;
+ *  see the `FacetCounts` doc comment in types.ts). */
+function applyFilters(
+  items: PackageSummary[],
+  query: CatalogQuery,
+  skip?: FacetDimension
+): PackageSummary[] {
+  let out = items;
+  if (query.kind && skip !== "kind") out = out.filter((p) => p.kind === query.kind);
+  if (query.runtime && skip !== "runtime") out = out.filter((p) => p.runtimes.includes(query.runtime!));
+  if (skip !== "price") {
+    if (query.price === "free") out = out.filter((p) => p.pricing.model === "free");
+    if (query.price === "paid") out = out.filter((p) => p.pricing.model !== "free");
+  }
+  if (query.tag && skip !== "tag") out = out.filter((p) => p.tags.includes(query.tag!));
+  if (query.owner && skip !== "owner") out = out.filter((p) => p.owner === query.owner);
+  return out;
+}
+
 async function list(query: CatalogQuery = {}): Promise<CatalogPage> {
   const packages = loadAllPackages();
-  let items: PackageSummary[] = packages.map(toSummary);
+  const allSummaries = packages.map(toSummary);
+  const baseFiltered = applyFilters(allSummaries, query);
 
   // Terms are ANDed across name/title/summary/owner/tags (a hyphenated tag like
   // "code-review" also matches "review" from `q=code review`) — see B9a/B9c and
   // the shared helper's own doc comment.
-  const terms = query.q ? tokenize(query.q) : [];
-  if (terms.length > 0) {
-    items = items.filter((p) => matchesTerms(terms, [p.title, p.summary, p.name, p.owner, ...p.tags]));
+  const rawTerms = query.q ? tokenize(query.q) : [];
+  let terms = rawTerms;
+  let items = baseFiltered;
+  let correctedQuery: string | undefined;
+
+  if (rawTerms.length > 0) {
+    items = baseFiltered.filter((p) => matchesTerms(rawTerms, fieldsOf(p)));
+    if (items.length === 0) {
+      // G-S1 typo tolerance: retry once against the catalog's own name/tag
+      // vocabulary before giving up. Vocabulary is built from every package
+      // (not just `baseFiltered`) so a typo can still be corrected even when
+      // combined with a kind/runtime/tag/owner filter that happens to exclude
+      // the only matching package's other fields.
+      const vocabulary = buildVocabulary(packages.map((p) => ({ name: p.name, tags: p.manifest.tags })));
+      const correction = buildCorrectedQuery(rawTerms, vocabulary);
+      if (correction.correctedQuery) {
+        const retried = baseFiltered.filter((p) => matchesTerms(correction.terms, fieldsOf(p)));
+        if (retried.length > 0) {
+          items = retried;
+          terms = correction.terms;
+          correctedQuery = correction.correctedQuery;
+        }
+      }
+    }
   }
-  if (query.kind) items = items.filter((p) => p.kind === query.kind);
-  if (query.runtime) items = items.filter((p) => p.runtimes.includes(query.runtime!));
-  if (query.price === "free") items = items.filter((p) => p.pricing.model === "free");
-  if (query.price === "paid") items = items.filter((p) => p.pricing.model !== "free");
-  if (query.tag) items = items.filter((p) => p.tags.includes(query.tag!));
-  if (query.owner) items = items.filter((p) => p.owner === query.owner);
 
   let sorted: PackageSummary[];
   if (terms.length > 0 && !query.sort) {
-    // No explicit sort and a search query: rank by relevance (exact name match,
-    // then name/title contains, then the rest) rather than plain recency.
+    // No explicit sort and a search query: rank by relevance (see search.ts's
+    // `scoreDocument`) rather than plain recency.
     sorted = rankByQuery(items, terms);
   } else {
     // Default to "updated": this layer's counters are always zero (see
     // loadPackage), so `withStats` re-sorts by the real numbers when sort is
-    // downloads/stars.
+    // downloads/stars. "trending" also falls through to "updated" here —
+    // this catalog has no DB-backed download_events to compute it from (G-S4).
     const sort = query.sort ?? "updated";
     sorted = [...items].sort((a, b) => {
       switch (sort) {
@@ -263,6 +313,7 @@ async function list(query: CatalogQuery = {}): Promise<CatalogPage> {
         case "downloads":
           return b.stats.downloads - a.stats.downloads || b.updatedAt.localeCompare(a.updatedAt);
         case "updated":
+        case "trending":
         default:
           return b.updatedAt.localeCompare(a.updatedAt) || a.name.localeCompare(b.name);
       }
@@ -275,7 +326,44 @@ async function list(query: CatalogQuery = {}): Promise<CatalogPage> {
   // internal callers pass CATALOG_ALL_LIMIT explicitly. No default here.
   const limit = query.limit!;
   const page = sorted.slice(offset, offset + limit);
-  return { items: page, total };
+  return { items: page, total, correctedQuery };
+}
+
+async function facets(query: CatalogQuery = {}): Promise<FacetCounts> {
+  const allSummaries = loadAllPackages().map(toSummary);
+  const terms = query.q ? tokenize(query.q) : [];
+  // The query-term filter always applies (it isn't one of the facet
+  // dimensions a user can "remove" from the sidebar); only kind/runtime/
+  // price/tag are computed with their own filter excluded.
+  const withTerms = (items: PackageSummary[]) =>
+    terms.length > 0 ? items.filter((p) => matchesTerms(terms, fieldsOf(p))) : items;
+
+  const kind: Partial<Record<(typeof PACKAGE_KINDS)[number], number>> = {};
+  for (const k of withTerms(applyFilters(allSummaries, query, "kind"))) {
+    kind[k.kind] = (kind[k.kind] ?? 0) + 1;
+  }
+
+  const runtime: Partial<Record<(typeof RUNTIME_IDS)[number], number>> = {};
+  for (const p of withTerms(applyFilters(allSummaries, query, "runtime"))) {
+    for (const r of p.runtimes) runtime[r] = (runtime[r] ?? 0) + 1;
+  }
+
+  const priceItems = withTerms(applyFilters(allSummaries, query, "price"));
+  const price = {
+    free: priceItems.filter((p) => p.pricing.model === "free").length,
+    paid: priceItems.filter((p) => p.pricing.model !== "free").length,
+  };
+
+  const tagCounts = new Map<string, number>();
+  for (const p of withTerms(applyFilters(allSummaries, query, "tag"))) {
+    for (const tag of p.tags) tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
+  }
+  const tags = Array.from(tagCounts.entries())
+    .map(([tag, count]) => ({ tag, count }))
+    .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
+    .slice(0, 20);
+
+  return { kind, runtime, price, tags };
 }
 
 async function get(owner: string, name: string): Promise<Package | null> {
@@ -346,6 +434,6 @@ async function tags(): Promise<{ tag: string; count: number }[]> {
     .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
 }
 
-export const seedCatalog: Catalog = { list, get, getFile, creator, featured, tags };
+export const seedCatalog: Catalog = { list, get, getFile, creator, featured, tags, facets };
 
 export default seedCatalog;
