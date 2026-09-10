@@ -1,0 +1,25 @@
+schema: 1
+name: context-compaction
+owner: openagents
+version: 1.0.0
+kind: harness
+title: Context Compaction
+summary: "Keep a long-running agent coherent past its context window: what to keep, what to summarize, and how to resume"
+license: MIT
+tags: [harness, context, long-running, memory, checkpoints]
+runtimes: [claude-code, codex, openai-agents, langgraph, generic]
+pricing:
+  model: free
+  amount_cents: 0
+  currency: usd
+entry: HARNESS.md
+files:
+  - HARNESS.md
+  - templates/checkpoint.md
+inputs:
+  - name: compact_at
+    type: number
+    required: false
+    default: 70
+    description: Percent of context used before compacting
+requires: []

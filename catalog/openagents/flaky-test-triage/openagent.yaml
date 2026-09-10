@@ -1,0 +1,29 @@
+schema: 1
+name: flaky-test-triage
+owner: openagents
+version: 1.0.0
+kind: workflow
+title: Flaky Test Triage
+summary: "Find why a test is flaky rather than retrying it: classify the cause, prove it, fix it, and quarantine honestly"
+license: MIT
+tags: [testing, flaky, ci, debugging, reliability]
+runtimes: [claude-code, cursor, codex, openai-agents, langgraph, generic]
+pricing:
+  model: free
+  amount_cents: 0
+  currency: usd
+entry: WORKFLOW.md
+files:
+  - WORKFLOW.md
+  - causes.md
+inputs:
+  - name: test
+    type: string
+    required: true
+    description: "The flaky test: name, file, or CI failure link"
+  - name: runs
+    type: number
+    required: false
+    default: 50
+    description: Repetitions used to establish a failure rate
+requires: []

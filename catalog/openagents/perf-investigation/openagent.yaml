@@ -1,0 +1,28 @@
+schema: 1
+name: perf-investigation
+owner: openagents
+version: 1.0.0
+kind: workflow
+title: Performance Investigation
+summary: "Find why something is slow with measurement rather than intuition: baseline, profile, fix the top cost, verify"
+license: MIT
+tags: [performance, profiling, optimization, debugging, latency]
+runtimes: [claude-code, cursor, codex, openai-agents, generic]
+pricing:
+  model: free
+  amount_cents: 0
+  currency: usd
+entry: WORKFLOW.md
+files:
+  - WORKFLOW.md
+  - measurement.md
+inputs:
+  - name: target
+    type: string
+    required: true
+    description: "What is slow: an endpoint, a job, a page, a function"
+  - name: goal
+    type: string
+    required: false
+    description: "The latency or throughput target, if there is one"
+requires: []

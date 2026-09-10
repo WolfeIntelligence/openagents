@@ -1,0 +1,28 @@
+schema: 1
+name: db-migration-review
+owner: openagents
+version: 1.0.0
+kind: workflow
+title: Migration Review
+summary: "Review a schema migration before it runs: locks, blast radius, deploy compatibility, and a rehearsed rollback"
+license: MIT
+tags: [database, migrations, review, safety, deployment]
+runtimes: [claude-code, cursor, codex, generic]
+pricing:
+  model: free
+  amount_cents: 0
+  currency: usd
+entry: WORKFLOW.md
+files:
+  - WORKFLOW.md
+  - patterns.md
+inputs:
+  - name: migration
+    type: string
+    required: true
+    description: The migration file or SQL to review
+  - name: table_size
+    type: string
+    required: false
+    description: "Approximate row count of the affected tables, if known"
+requires: []

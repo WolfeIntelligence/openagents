@@ -35,19 +35,39 @@ export function PackageCard({ pkg }: { pkg: PackageSummary }) {
         ))}
       </div>
 
+      {/* Counts are real, so a package with no history shows no count at all
+          rather than a row of zeros. New packages say so instead. */}
       <div className="flex items-center gap-4 border-t border-border pt-3 text-xs text-fg-subtle">
-        <span className="inline-flex items-center gap-1">
-          <StarIcon className="h-3.5 w-3.5" />
-          {pkg.stats.stars.toLocaleString()}
-        </span>
-        <span className="inline-flex items-center gap-1">
-          <DownloadIcon className="h-3.5 w-3.5" />
-          {pkg.stats.downloads.toLocaleString()}
-        </span>
+        {pkg.stats.stars > 0 && (
+          <span className="inline-flex items-center gap-1">
+            <StarIcon className="h-3.5 w-3.5" />
+            {pkg.stats.stars.toLocaleString()}
+          </span>
+        )}
+        {pkg.stats.downloads > 0 && (
+          <span className="inline-flex items-center gap-1">
+            <DownloadIcon className="h-3.5 w-3.5" />
+            {pkg.stats.downloads.toLocaleString()}
+          </span>
+        )}
+        {pkg.stats.stars === 0 && pkg.stats.downloads === 0 && (
+          <span>Updated {formatUpdated(pkg.updatedAt)}</span>
+        )}
         <span className="ml-auto font-mono">v{pkg.version}</span>
       </div>
     </Link>
   );
+}
+
+/** "today" / "3 days ago" / a plain date once it stops being news. */
+function formatUpdated(iso: string): string {
+  const then = new Date(iso);
+  if (Number.isNaN(then.getTime())) return "recently";
+  const days = Math.floor((Date.now() - then.getTime()) / 86_400_000);
+  if (days <= 0) return "today";
+  if (days === 1) return "yesterday";
+  if (days < 30) return `${days} days ago`;
+  return then.toLocaleDateString(undefined, { month: "short", year: "numeric" });
 }
 
 function StarIcon({ className }: { className?: string }) {

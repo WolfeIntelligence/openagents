@@ -1,0 +1,28 @@
+schema: 1
+name: log-triage
+owner: openagents
+version: 1.0.0
+kind: skill
+title: Log Triage
+summary: "Turn a wall of logs into a ranked set of hypotheses, each with the evidence for it and the cheapest way to test it"
+license: MIT
+tags: [debugging, logs, incident, observability, skill]
+runtimes: [claude-code, cursor, codex, openai-agents, langgraph, generic]
+pricing:
+  model: free
+  amount_cents: 0
+  currency: usd
+entry: SKILL.md
+files:
+  - SKILL.md
+  - templates/triage.md
+inputs:
+  - name: logs
+    type: string
+    required: true
+    description: "Log file, paste, or query results"
+  - name: symptom
+    type: string
+    required: false
+    description: "What was observed to be wrong, if known"
+requires: []

@@ -29,9 +29,11 @@ import {
 const CATALOG_ROOT = path.join(process.cwd(), "catalog");
 const BUILD_TIME = new Date().toISOString();
 
-interface StatsFile {
-  downloads?: number;
-  stars?: number;
+/** `.meta.json` — the two things about a package that aren't derivable from its
+ *  own files: the editorial `featured` flag and real git-derived timestamps.
+ *  Written by `scripts/sync-catalog-meta.ts`. Never holds download/star counts:
+ *  those are real counters in the database, applied by `withStats` in `./index`. */
+interface MetaFile {
   featured?: boolean;
   createdAt?: string;
   updatedAt?: string;
@@ -119,18 +121,18 @@ function loadPackage(owner: string, name: string, pkgPath: string): Package | nu
     return { path: f, size: stat.size };
   });
 
-  const stats = readJsonSafe<StatsFile>(path.join(pkgPath, ".stats.json")) ?? {};
+  const meta = readJsonSafe<MetaFile>(path.join(pkgPath, ".meta.json")) ?? {};
 
   // Deployed bundles (e.g. Vercel) normalize file mtimes to a bogus epoch, so
-  // prefer explicit dates from .stats.json and fall back to build time when the
-  // filesystem dates look fake.
+  // prefer the real git-derived dates in .meta.json and fall back to build time
+  // when the filesystem dates look fake.
   const buildTime = BUILD_TIME;
   const plausible = (ms: number) => ms > Date.UTC(2020, 0, 1);
   const createdAt =
-    stats.createdAt ??
+    meta.createdAt ??
     (plausible(Math.min(...mtimes)) ? new Date(Math.min(...mtimes)).toISOString() : buildTime);
   const updatedAt =
-    stats.updatedAt ??
+    meta.updatedAt ??
     (plausible(Math.max(...mtimes)) ? new Date(Math.max(...mtimes)).toISOString() : buildTime);
 
   const pkg: Package = {
@@ -141,11 +143,12 @@ function loadPackage(owner: string, name: string, pkgPath: string): Package | nu
     readme,
     files,
     versions: [{ version: manifest.version, publishedAt: updatedAt }],
-    stats: {
-      downloads: stats.downloads ?? 0,
-      stars: stats.stars ?? 0,
-    },
-    featured: stats.featured ?? false,
+    // Seed packages live on disk and carry no counters of their own. Real
+    // download/star counts are stored in the database against (owner, name) and
+    // layered on by `withStats` in `./index`; zero here means "not counted yet",
+    // never a placeholder.
+    stats: { downloads: 0, stars: 0 },
+    featured: meta.featured ?? false,
     source: "seed",
     createdAt,
     updatedAt,
@@ -243,18 +246,20 @@ async function list(query: CatalogQuery = {}): Promise<CatalogPage> {
   if (query.tag) items = items.filter((p) => p.tags.includes(query.tag!));
   if (query.owner) items = items.filter((p) => p.owner === query.owner);
 
-  const sort = query.sort ?? "downloads";
+  // Default to "updated": this layer's counters are always zero (see loadPackage),
+  // so `withStats` re-sorts by the real numbers when sort is downloads/stars.
+  const sort = query.sort ?? "updated";
   const sorted = [...items].sort((a, b) => {
     switch (sort) {
       case "stars":
-        return b.stats.stars - a.stats.stars;
-      case "updated":
-        return b.updatedAt.localeCompare(a.updatedAt);
+        return b.stats.stars - a.stats.stars || b.updatedAt.localeCompare(a.updatedAt);
       case "name":
         return a.name.localeCompare(b.name);
       case "downloads":
+        return b.stats.downloads - a.stats.downloads || b.updatedAt.localeCompare(a.updatedAt);
+      case "updated":
       default:
-        return b.stats.downloads - a.stats.downloads;
+        return b.updatedAt.localeCompare(a.updatedAt) || a.name.localeCompare(b.name);
     }
   });
 
@@ -316,7 +321,9 @@ async function featured(limit: number = 6): Promise<PackageSummary[]> {
   const packages = loadAllPackages();
   const marked = packages.filter((p) => p.featured).map(toSummary);
   const pool = marked.length > 0 ? marked : packages.map(toSummary);
-  return [...pool].sort((a, b) => b.stats.downloads - a.stats.downloads).slice(0, limit);
+  return [...pool]
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.name.localeCompare(b.name))
+    .slice(0, limit);
 }
 
 async function tags(): Promise<{ tag: string; count: number }[]> {

@@ -13,7 +13,8 @@
   "files": [
     "bin",
     "lib",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "keywords": [
     "openagents",
@@ -27,7 +28,11 @@
   "homepage": "https://openagents-nu.vercel.app",
   "repository": {
     "type": "git",
-    "url": "https://github.com/WolfeIntelligence/openagents/openagents"
+    "url": "git+https://github.com/WolfeIntelligence/openagents.git",
+    "directory": "cli"
+  },
+  "bugs": {
+    "url": "https://github.com/WolfeIntelligence/openagents/issues"
   },
   "dependencies": {
     "tar": "^7.4.3"

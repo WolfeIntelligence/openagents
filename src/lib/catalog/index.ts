@@ -5,14 +5,19 @@
 // note at the top of `src/lib/catalog/seed.ts`.
 
 import {
+  CATALOG_ALL_LIMIT,
   PACKAGE_KINDS,
   RUNTIME_IDS,
   type Catalog,
+  type CatalogPage,
   type CatalogQuery,
+  type Package,
   type PackageKind,
+  type PackageSummary,
   type RuntimeId,
 } from "@/lib/types";
 import { seedCatalog } from "@/lib/catalog/seed";
+import { getStats, statsKey, ZERO_STATS } from "@/lib/stats";
 
 let catalogPromise: Promise<Catalog> | null = null;
 
@@ -40,20 +45,89 @@ export function getCatalog(): Promise<Catalog> {
 
 async function buildCatalog(): Promise<Catalog> {
   if (!process.env.DATABASE_URL) {
+    // No database means nowhere to have recorded a download or a star, so every
+    // package correctly reports zero rather than a made-up number.
     return seedCatalog;
   }
+  let base: Catalog = seedCatalog;
   try {
     const mod = (await import("./db")) as {
       createDbCatalog?: (seed: Catalog) => Catalog;
     };
     if (typeof mod.createDbCatalog === "function") {
-      return mod.createDbCatalog(seedCatalog);
+      base = mod.createDbCatalog(seedCatalog);
     }
   } catch {
     // "./db" doesn't exist yet, failed to import, or failed to construct —
     // fall back to the always-available seed catalog.
   }
-  return seedCatalog;
+  return withStats(base);
+}
+
+/**
+ * Wraps a catalog so every package carries its real download and star counts.
+ *
+ * Counts live in one `package_stats` table keyed by (owner, name), which covers
+ * on-disk seed packages and database-backed ones alike, so this decorator is the
+ * single place stats are attached. The underlying catalogs always report zero.
+ */
+function withStats(inner: Catalog): Catalog {
+  async function decorate(items: PackageSummary[]): Promise<PackageSummary[]> {
+    if (items.length === 0) return items;
+    const map = await getStats(items.map((i) => ({ owner: i.owner, name: i.name })));
+    return items.map((item) => ({
+      ...item,
+      stats: map.get(statsKey(item.owner, item.name)) ?? ZERO_STATS,
+    }));
+  }
+
+  return {
+    async list(query: CatalogQuery = {}): Promise<CatalogPage> {
+      // Sorting by a real count has to happen after the counts are attached, so
+      // for those two sorts fetch the whole filtered set, decorate, then page.
+      // The catalog is small enough that this is one extra query, not a scan.
+      //
+      // `limit` is an explicit ceiling rather than `undefined`: the seed catalog
+      // reads an absent limit as its default page size, which would drop every
+      // package past that page before the re-sort ever saw it.
+      if (query.sort === "downloads" || query.sort === "stars") {
+        const { items, total } = await inner.list({
+          ...query,
+          limit: CATALOG_ALL_LIMIT,
+          offset: 0,
+        });
+        const decorated = await decorate(items);
+        const key = query.sort;
+        decorated.sort(
+          (a, b) =>
+            b.stats[key] - a.stats[key] ||
+            b.updatedAt.localeCompare(a.updatedAt) ||
+            a.name.localeCompare(b.name)
+        );
+        const offset = query.offset ?? 0;
+        const limit = query.limit ?? 24;
+        return { items: decorated.slice(offset, offset + limit), total };
+      }
+
+      const page = await inner.list(query);
+      return { ...page, items: await decorate(page.items) };
+    },
+
+    async get(owner: string, name: string): Promise<Package | null> {
+      const pkg = await inner.get(owner, name);
+      if (!pkg) return null;
+      const map = await getStats([{ owner, name }]);
+      return { ...pkg, stats: map.get(statsKey(owner, name)) ?? ZERO_STATS };
+    },
+
+    getFile: inner.getFile,
+    creator: inner.creator,
+    tags: inner.tags,
+
+    async featured(limit?: number): Promise<PackageSummary[]> {
+      return decorate(await inner.featured(limit));
+    },
+  };
 }
 
 type SearchParamsLike = URLSearchParams | Record<string, string | string[] | undefined>;

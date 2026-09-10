@@ -118,6 +118,14 @@ export interface CatalogQuery {
   offset?: number;
 }
 
+/**
+ * Ceiling for internal "fetch the whole filtered set" queries — merging the seed
+ * and DB catalogs, or re-sorting by a real download/star count. Pass this rather
+ * than leaving `limit` unset: an absent limit means "one default page" to the
+ * seed catalog, which would silently drop everything past it.
+ */
+export const CATALOG_ALL_LIMIT = 10_000;
+
 export interface CatalogPage {
   items: PackageSummary[];
   total: number;

@@ -1,0 +1,20 @@
+schema: 1
+name: sql-safety-rules
+owner: openagents
+version: 1.0.0
+kind: rules
+title: SQL Safety Rules
+summary: "Rules for agent-written SQL and migrations: no unbounded writes, no blocking locks, always a rollback path"
+license: MIT
+tags: [sql, database, rules, migrations, safety]
+runtimes: [claude-code, cursor, codex, generic]
+pricing:
+  model: free
+  amount_cents: 0
+  currency: usd
+entry: RULES.md
+files:
+  - RULES.md
+  - migration-checklist.md
+inputs: []
+requires: []

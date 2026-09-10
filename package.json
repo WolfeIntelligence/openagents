@@ -10,7 +10,8 @@
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
-    "check:catalog": "npx tsx scripts/check-catalog.ts"
+    "check:catalog": "npx tsx scripts/check-catalog.ts",
+    "sync:meta": "npx tsx scripts/sync-catalog-meta.ts"
   },
   "dependencies": {
     "@auth/drizzle-adapter": "^1.11.3",

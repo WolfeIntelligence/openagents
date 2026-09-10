@@ -1,0 +1,29 @@
+schema: 1
+name: sql-explain
+owner: openagents
+version: 1.0.0
+kind: skill
+title: Query Plan Reader
+summary: "Read an EXPLAIN plan, find the actual bottleneck, and propose the smallest index or rewrite that fixes it"
+license: MIT
+tags: [sql, performance, database, indexes, skill]
+runtimes: [claude-code, cursor, codex, openai-agents, generic]
+pricing:
+  model: free
+  amount_cents: 0
+  currency: usd
+entry: SKILL.md
+files:
+  - SKILL.md
+  - plan-nodes.md
+inputs:
+  - name: query
+    type: string
+    required: true
+    description: The slow SQL query
+  - name: engine
+    type: string
+    required: false
+    default: postgres
+    description: "postgres | mysql | sqlite"
+requires: []

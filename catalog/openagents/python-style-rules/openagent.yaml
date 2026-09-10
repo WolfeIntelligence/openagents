@@ -1,0 +1,20 @@
+schema: 1
+name: python-style-rules
+owner: openagents
+version: 1.0.0
+kind: rules
+title: Python Style Rules
+summary: "Rules for agent-written Python: explicit failures, boring data structures, dependency restraint, and honest type hints"
+license: MIT
+tags: [python, rules, style, typing, code-quality]
+runtimes: [claude-code, cursor, codex, generic]
+pricing:
+  model: free
+  amount_cents: 0
+  currency: usd
+entry: RULES.md
+files:
+  - RULES.md
+  - review-checklist.md
+inputs: []
+requires: []

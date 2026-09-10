@@ -1,0 +1,25 @@
+schema: 1
+name: human-in-the-loop
+owner: openagents
+version: 1.0.0
+kind: harness
+title: Human In The Loop
+summary: "Approval gates for risky agent actions: what needs asking, how to ask well, and what an approval does not cover"
+license: MIT
+tags: [harness, safety, approvals, guardrails, autonomy]
+runtimes: [claude-code, cursor, codex, openai-agents, langgraph, generic]
+pricing:
+  model: free
+  amount_cents: 0
+  currency: usd
+entry: HARNESS.md
+files:
+  - HARNESS.md
+  - gates.md
+inputs:
+  - name: autonomy
+    type: string
+    required: false
+    default: standard
+    description: "strict (ask for anything with a side effect) | standard | trusted (ask only for the irreversible)"
+requires: []

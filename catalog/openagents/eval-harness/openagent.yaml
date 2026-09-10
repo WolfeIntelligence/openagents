@@ -1,0 +1,30 @@
+schema: 1
+name: eval-harness
+owner: openagents
+version: 1.0.0
+kind: harness
+title: Agent Eval Harness
+summary: "Build a real eval suite for an agent or prompt: cases, graders, a baseline, and a regression gate"
+license: MIT
+tags: [evals, testing, harness, regression, quality]
+runtimes: [claude-code, codex, openai-agents, langgraph, generic]
+pricing:
+  model: free
+  amount_cents: 0
+  currency: usd
+entry: HARNESS.md
+files:
+  - HARNESS.md
+  - grading.md
+  - templates/cases.jsonl
+inputs:
+  - name: target
+    type: string
+    required: true
+    description: "What is being evaluated: a prompt file, an agent entry point, or a graph node"
+  - name: n_cases
+    type: number
+    required: false
+    default: 30
+    description: How many cases to build before measuring a baseline
+requires: []

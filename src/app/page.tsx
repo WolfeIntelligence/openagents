@@ -6,6 +6,7 @@ import { PackageCard } from "@/components/PackageCard";
 import { SearchBox } from "@/components/SearchBox";
 import { CopyButton } from "@/components/CopyButton";
 import { EmptyState } from "@/components/EmptyState";
+import { isStripeEnabled, PLATFORM_FEE_BPS } from "@/lib/stripe";
 
 const INSTALL_SNIPPET = "npx openagents add openagents/pr-reviewer";
 
@@ -36,6 +37,7 @@ export default async function HomePage() {
     ),
   ]);
   const counts = Object.fromEntries(kindCounts);
+  const paymentsLive = isStripeEnabled();
 
   return (
     <div>
@@ -139,9 +141,23 @@ export default async function HomePage() {
               <div>
                 <h2 className="text-xl font-semibold text-fg">Publish yours</h2>
                 <p className="mt-2 max-w-xl text-sm text-fg-muted">
-                  Free packages are always free to publish and free to install — no platform fee,
-                  ever. Charge for a package and keep 90% of every sale; OpenAgents takes a 10%
-                  platform fee to cover payments and hosting.
+                  Free packages are always free to publish and free to install — no platform
+                  fee, ever.{" "}
+                  {paymentsLive ? (
+                    <>
+                      Charge for a package and keep {100 - PLATFORM_FEE_BPS / 100}% of every
+                      sale; OpenAgents takes a {PLATFORM_FEE_BPS / 100}% platform fee to cover
+                      payments and hosting.
+                    </>
+                  ) : (
+                    <>
+                      Paid packages aren&rsquo;t live yet — see{" "}
+                      <Link href="/pricing" className="text-accent hover:text-accent-hover">
+                        pricing
+                      </Link>{" "}
+                      for the terms that will apply.
+                    </>
+                  )}
                 </p>
               </div>
               <Link

@@ -30,6 +30,12 @@ database required.
 7. **Open a pull request.** Describe what the package does and why it's useful in the
    PR description.
 
+Once the package is committed, a maintainer runs `npm run sync:meta` to record its real
+created/updated dates from git history into `.meta.json`. That file holds only those
+dates and the editorial `featured` flag — never download or star counts, which are real
+counters in the database and only ever move because someone downloaded or starred the
+package.
+
 ## Quality bar
 
 A package gets rejected (or sent back for changes) if it's:

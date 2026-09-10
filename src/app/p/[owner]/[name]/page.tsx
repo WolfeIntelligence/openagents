@@ -3,12 +3,17 @@ import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { getCatalog } from "@/lib/catalog";
+import { auth } from "@/lib/auth";
+import { hasPurchased } from "@/lib/purchases";
 import { KindBadge } from "@/components/KindBadge";
 import { PricingBadge } from "@/components/PricingBadge";
 import { RuntimeChips } from "@/components/RuntimeChips";
 import { InstallBox } from "@/components/InstallBox";
 import { BuyButton } from "@/components/BuyButton";
 import { Markdown } from "@/components/Markdown";
+import { StarButton } from "@/components/StarButton";
+import { isStarred } from "@/lib/stats";
+import { isDbEnabled } from "@/lib/db/client";
 
 type Params = { owner: string; name: string };
 type TabId = "readme" | "files" | "manifest" | "versions";
@@ -44,10 +49,10 @@ export default async function PackagePage({
   searchParams,
 }: {
   params: Promise<Params>;
-  searchParams: Promise<{ tab?: string }>;
+  searchParams: Promise<{ tab?: string; checkout?: string }>;
 }) {
   const { owner, name } = await params;
-  const { tab: rawTab } = await searchParams;
+  const { tab: rawTab, checkout } = await searchParams;
   const pkg = await loadPackage(owner, name);
   if (!pkg) notFound();
 
@@ -57,6 +62,16 @@ export default async function PackagePage({
   const activeTab: TabId = (TABS.find((t) => t.id === rawTab)?.id ?? "readme");
   const { manifest } = pkg;
   const isFree = manifest.pricing.model === "free" || manifest.pricing.amountCents === 0;
+
+  const session = await auth();
+  const isOwner = Boolean(session?.user?.handle && session.user.handle === owner);
+  const owns =
+    isFree ||
+    isOwner ||
+    (session?.user?.id ? await hasPurchased(session.user.id, owner, name) : false);
+
+  const starsEnabled = isDbEnabled();
+  const starred = session?.user?.id ? await isStarred(session.user.id, owner, name) : false;
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
@@ -79,11 +94,15 @@ export default async function PackagePage({
           <span className="font-mono">v{manifest.version}</span>
           <span aria-hidden="true">&middot;</span>
           <span>{manifest.license}</span>
-          <span aria-hidden="true">&middot;</span>
-          <span>
-            {pkg.stats.stars.toLocaleString()} stars &middot;{" "}
-            {pkg.stats.downloads.toLocaleString()} downloads
-          </span>
+          {pkg.stats.downloads > 0 && (
+            <>
+              <span aria-hidden="true">&middot;</span>
+              <span>
+                {pkg.stats.downloads.toLocaleString()}{" "}
+                {pkg.stats.downloads === 1 ? "download" : "downloads"}
+              </span>
+            </>
+          )}
         </div>
       </div>
 
@@ -91,15 +110,44 @@ export default async function PackagePage({
         <div className="min-w-0 flex-1">
           {/* Action row */}
           <div className="mb-6 flex flex-col gap-4">
+            {checkout === "success" && (
+              <div className="rounded-lg border border-accent-border bg-accent-muted p-3 text-sm text-fg">
+                Purchase complete — you own this package.
+              </div>
+            )}
+            {checkout === "cancelled" && (
+              <div className="rounded-lg border border-border bg-surface p-3 text-sm text-fg-muted">
+                Checkout was cancelled — no charge was made.
+              </div>
+            )}
             <InstallBox owner={owner} name={name} runtimes={manifest.runtimes} />
             <div className="flex flex-wrap items-center gap-3">
-              <a
-                href={`/api/v1/packages/${owner}/${name}/download`}
-                className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm font-medium text-fg hover:border-border-strong"
-              >
-                Download .tgz
-              </a>
-              {!isFree && (
+              <StarButton
+                owner={owner}
+                name={name}
+                initialStars={pkg.stats.stars}
+                initialStarred={starred}
+                signedIn={Boolean(session?.user?.id)}
+                enabled={starsEnabled}
+              />
+              {isFree ? (
+                <a
+                  href={`/api/v1/packages/${owner}/${name}/download`}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm font-medium text-fg hover:border-border-strong"
+                >
+                  Download .tgz
+                </a>
+              ) : owns ? (
+                <>
+                  <a
+                    href={`/api/v1/packages/${owner}/${name}/download`}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-fg transition-colors hover:bg-accent-hover"
+                  >
+                    Download .tgz
+                  </a>
+                  {!isOwner && <span className="text-xs text-fg-subtle">You own this package.</span>}
+                </>
+              ) : (
                 <BuyButton
                   owner={owner}
                   name={name}
@@ -168,11 +216,15 @@ export default async function PackagePage({
               <dl className="flex flex-col gap-1.5 text-sm">
                 <div className="flex justify-between">
                   <dt className="text-fg-muted">Stars</dt>
-                  <dd className="font-mono text-fg">{pkg.stats.stars.toLocaleString()}</dd>
+                  <dd className="font-mono text-fg">
+                    {pkg.stats.stars > 0 ? pkg.stats.stars.toLocaleString() : "None yet"}
+                  </dd>
                 </div>
                 <div className="flex justify-between">
                   <dt className="text-fg-muted">Downloads</dt>
-                  <dd className="font-mono text-fg">{pkg.stats.downloads.toLocaleString()}</dd>
+                  <dd className="font-mono text-fg">
+                    {pkg.stats.downloads > 0 ? pkg.stats.downloads.toLocaleString() : "None yet"}
+                  </dd>
                 </div>
                 <div className="flex justify-between">
                   <dt className="text-fg-muted">Updated</dt>

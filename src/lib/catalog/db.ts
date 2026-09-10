@@ -8,7 +8,8 @@
 
 import { and, eq, ilike, ne, or, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
-import { packageFiles, packages, packageVersions, stars, users } from "@/lib/db/schema";
+import { packageFiles, packages, packageVersions, users } from "@/lib/db/schema";
+import { CATALOG_ALL_LIMIT } from "@/lib/types";
 import type {
   Catalog,
   CatalogPage,
@@ -43,7 +44,9 @@ function rowToSummary(row: PackageRow): PackageSummary {
     },
     version: row.latestVersion,
     license: row.license,
-    stats: { downloads: row.downloads, stars: row.stars },
+    // Zero here is a placeholder the `withStats` decorator in ./index replaces
+    // with the real counts; this layer never stores its own copy. See ./index.
+    stats: { downloads: 0, stars: 0 },
     featured: row.featured,
     source: "db",
     updatedAt: row.updatedAt.toISOString(),
@@ -106,7 +109,7 @@ async function rowToPackage(db: Db, row: PackageRow): Promise<Package> {
         publishedAt: v.publishedAt.toISOString(),
         changelog: v.changelog ?? undefined,
       })),
-    stats: { downloads: row.downloads, stars: row.stars },
+    stats: { downloads: 0, stars: 0 }, // filled in by `withStats` — see ./index
     featured: row.featured,
     source: "db",
     createdAt: row.createdAt.toISOString(),
@@ -154,22 +157,20 @@ function mergeSummaries(seedItems: PackageSummary[], dbItems: PackageSummary[]):
   return Array.from(map.values());
 }
 
+/** Orders a merged page. "downloads" and "stars" are deliberately not handled
+ *  here: this layer reports zero for both, so `withStats` in ./index re-sorts by
+ *  the real counts once it has attached them. Ordering by recency in the meantime
+ *  keeps the pre-sort stable rather than arbitrary. */
 function sortSummaries(items: PackageSummary[], sort: CatalogQuery["sort"]): PackageSummary[] {
   const arr = [...items];
-  switch (sort) {
-    case "stars":
-      arr.sort((a, b) => b.stats.stars - a.stats.stars);
-      break;
-    case "updated":
-      arr.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-      break;
-    case "name":
-      arr.sort((a, b) => a.name.localeCompare(b.name));
-      break;
-    case "downloads":
-    default:
-      arr.sort((a, b) => b.stats.downloads - a.stats.downloads);
-      break;
+  if (sort === "name") {
+    arr.sort((a, b) => a.name.localeCompare(b.name));
+  } else {
+    arr.sort(
+      (a, b) =>
+        new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime() ||
+        a.name.localeCompare(b.name)
+    );
   }
   return arr;
 }
@@ -178,7 +179,13 @@ export function createDbCatalog(seed: Catalog): Catalog {
   return {
     async list(query: CatalogQuery = {}): Promise<CatalogPage> {
       const db = getDb();
-      const seedQuery: CatalogQuery = { ...query, limit: undefined, offset: undefined };
+      // Explicit ceiling, not `undefined` — see CATALOG_ALL_LIMIT. Merging needs
+      // every matching seed package, then this layer pages the merged result.
+      const seedQuery: CatalogQuery = {
+        ...query,
+        limit: CATALOG_ALL_LIMIT,
+        offset: 0,
+      };
       const [seedPage, dbSummaries] = await Promise.all([
         seed.list(seedQuery),
         db ? queryDbSummaries(db, query) : Promise.resolve([]),
@@ -276,10 +283,7 @@ export function createDbCatalog(seed: Catalog): Catalog {
           ? db.select().from(packages).where(eq(packages.featured, true))
           : Promise.resolve([]),
       ]);
-      const merged = sortSummaries(
-        mergeSummaries(seedItems, dbRows.map(rowToSummary)),
-        "downloads"
-      );
+      const merged = sortSummaries(mergeSummaries(seedItems, dbRows.map(rowToSummary)), "updated");
       return merged.slice(0, limit);
     },
 
@@ -299,52 +303,4 @@ export function createDbCatalog(seed: Catalog): Catalog {
         .sort((a, b) => b.count - a.count);
     },
   };
-}
-
-/** Increments the download counter for a DB-backed package. No-op when DB is disabled
- *  or the package isn't found in the DB (e.g. it's a seed-only package). */
-export async function recordDownload(owner: string, name: string): Promise<void> {
-  const db = getDb();
-  if (!db) return;
-  await db
-    .update(packages)
-    .set({ downloads: sql`${packages.downloads} + 1` })
-    .where(and(eq(packages.owner, owner), eq(packages.name, name)));
-}
-
-/** Toggles a star for (userId, packageId), keeping packages.stars in sync.
- *  Returns the new starred state and the package's updated star count.
- *  No-ops (returns null) when DB is disabled. */
-export async function toggleStar(
-  userId: string,
-  packageId: string
-): Promise<{ starred: boolean; stars: number } | null> {
-  const db = getDb();
-  if (!db) return null;
-
-  const [existing] = await db
-    .select()
-    .from(stars)
-    .where(and(eq(stars.userId, userId), eq(stars.packageId, packageId)))
-    .limit(1);
-
-  if (existing) {
-    await db
-      .delete(stars)
-      .where(and(eq(stars.userId, userId), eq(stars.packageId, packageId)));
-    const [row] = await db
-      .update(packages)
-      .set({ stars: sql`greatest(${packages.stars} - 1, 0)` })
-      .where(eq(packages.id, packageId))
-      .returning({ stars: packages.stars });
-    return { starred: false, stars: row?.stars ?? 0 };
-  }
-
-  await db.insert(stars).values({ userId, packageId });
-  const [row] = await db
-    .update(packages)
-    .set({ stars: sql`${packages.stars} + 1` })
-    .where(eq(packages.id, packageId))
-    .returning({ stars: packages.stars });
-  return { starred: true, stars: row?.stars ?? 0 };
 }

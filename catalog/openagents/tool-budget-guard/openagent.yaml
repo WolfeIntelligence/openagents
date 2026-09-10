@@ -1,0 +1,35 @@
+schema: 1
+name: tool-budget-guard
+owner: openagents
+version: 1.0.0
+kind: harness
+title: Tool Budget Guard
+summary: "Cap an agent's tool calls, tokens, and wall-clock time, with a defined escalation path when a budget runs out"
+license: MIT
+tags: [harness, guardrails, cost, reliability, loops]
+runtimes: [claude-code, codex, openai-agents, langgraph, generic]
+pricing:
+  model: free
+  amount_cents: 0
+  currency: usd
+entry: HARNESS.md
+files:
+  - HARNESS.md
+  - budgets.md
+inputs:
+  - name: max_tool_calls
+    type: number
+    required: false
+    default: 40
+    description: Hard ceiling on tool calls for one task
+  - name: max_wall_clock_s
+    type: number
+    required: false
+    default: 900
+    description: Hard ceiling in seconds for one task
+  - name: on_exhausted
+    type: string
+    required: false
+    default: report
+    description: "report | ask | abort - what to do when a budget is spent"
+requires: []

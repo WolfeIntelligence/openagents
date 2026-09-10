@@ -1,0 +1,28 @@
+schema: 1
+name: postmortem-writer
+owner: openagents
+version: 1.0.0
+kind: workflow
+title: Blameless Postmortem
+summary: "Turn an incident into a written postmortem: timeline from evidence, contributing factors, and actions that are actually assigned"
+license: MIT
+tags: [incident, postmortem, reliability, documentation, sre]
+runtimes: [claude-code, codex, openai-agents, generic]
+pricing:
+  model: free
+  amount_cents: 0
+  currency: usd
+entry: WORKFLOW.md
+files:
+  - WORKFLOW.md
+  - templates/postmortem.md
+inputs:
+  - name: incident
+    type: string
+    required: true
+    description: "Incident channel, ticket, or notes"
+  - name: severity
+    type: string
+    required: false
+    description: Severity as declared during the incident
+requires: []

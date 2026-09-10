@@ -1,0 +1,20 @@
+schema: 1
+name: writing-style-rules
+owner: openagents
+version: 1.0.0
+kind: rules
+title: Technical Writing Rules
+summary: "Rules for agent-written docs, commits, and PR descriptions: lead with the answer, cut hedging, and never invent certainty"
+license: MIT
+tags: [writing, documentation, rules, communication, style]
+runtimes: [claude-code, cursor, codex, openai-agents, generic]
+pricing:
+  model: free
+  amount_cents: 0
+  currency: usd
+entry: RULES.md
+files:
+  - RULES.md
+  - patterns.md
+inputs: []
+requires: []

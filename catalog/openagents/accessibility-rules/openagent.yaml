@@ -1,0 +1,20 @@
+schema: 1
+name: accessibility-rules
+owner: openagents
+version: 1.0.0
+kind: rules
+title: Accessibility Rules
+summary: "Rules for agent-written UI: semantics before ARIA, keyboard parity, visible focus, and contrast that actually passes"
+license: MIT
+tags: [accessibility, a11y, frontend, rules, html]
+runtimes: [claude-code, cursor, codex, generic]
+pricing:
+  model: free
+  amount_cents: 0
+  currency: usd
+entry: RULES.md
+files:
+  - RULES.md
+  - review-checklist.md
+inputs: []
+requires: []

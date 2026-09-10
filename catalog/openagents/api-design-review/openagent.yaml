@@ -1,0 +1,29 @@
+schema: 1
+name: api-design-review
+owner: openagents
+version: 1.0.0
+kind: skill
+title: API Design Review
+summary: "Review an HTTP or RPC interface before it ships: naming, errors, pagination, versioning, and the parts that become permanent"
+license: MIT
+tags: [api, design, review, http, skill]
+runtimes: [claude-code, cursor, codex, openai-agents, generic]
+pricing:
+  model: free
+  amount_cents: 0
+  currency: usd
+entry: SKILL.md
+files:
+  - SKILL.md
+  - checklist.md
+inputs:
+  - name: spec
+    type: string
+    required: true
+    description: "The API definition: OpenAPI file, route handlers, or a written proposal"
+  - name: audience
+    type: string
+    required: false
+    default: internal
+    description: "internal | partner | public - how expensive a breaking change will be"
+requires: []

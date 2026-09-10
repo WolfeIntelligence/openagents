@@ -12,8 +12,6 @@ SDK, LangGraph, or anything else via a generic install layout.
 npx openagents add openagents/pr-reviewer
 ```
 
-![OpenAgents screenshot placeholder](./public/screenshot-placeholder.png)
-
 ## What's in a package
 
 A package is a directory with an `openagent.yaml` manifest, a `README.md`, and
@@ -27,11 +25,15 @@ scripts. Four kinds cover everything in the catalog:
 | `rules` | Constraints / style / policy files an agent must obey (e.g. a CLAUDE.md set). |
 | `skill` | A reusable capability with its own instructions + helper scripts. |
 
-Ten free packages ship bundled with the project under `catalog/openagents/` — PR
-reviewer, repo onboarding, a red/green test-writing loop, secure coding rules, commit
-conventions, a changelog generator, a dependency upgrader, an incident runbook, agent
-guardrails, and a research-brief skill. Browse them at [`/explore`](https://openagents-nu.vercel.app/explore)
-or list them with the CLI:
+Free packages ship bundled with the project under `catalog/openagents/`, spanning all
+four kinds: workflows (PR review, migration review, flaky-test triage, performance
+investigation, incident postmortems, repo onboarding, changelog generation, dependency
+upgrades), harnesses (eval suites, tool budgets, approval gates, context compaction,
+a red/green test loop, agent guardrails), rules (TypeScript, Python, SQL safety,
+accessibility, technical writing, secure coding, commit conventions), and skills
+(query-plan reading, log triage, dataset profiling, API design review, research
+briefs). Browse them at [`/explore`](https://openagents-nu.vercel.app/explore) or list
+them with the CLI:
 
 ```bash
 npx openagents search ""
@@ -41,7 +43,7 @@ npx openagents info openagents/pr-reviewer
 ## Quickstart (development)
 
 ```bash
-git clone https://github.com/WolfeIntelligence/openagents/openagents.git
+git clone https://github.com/WolfeIntelligence/openagents.git
 cd openagents
 npm install
 npm run dev

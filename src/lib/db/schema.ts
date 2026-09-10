@@ -102,8 +102,6 @@ export const packages = pgTable(
     currency: text("currency").notNull().default("usd"),
     entry: text("entry").notNull(),
     featured: boolean("featured").notNull().default(false),
-    downloads: integer("downloads").notNull().default(0),
-    stars: integer("stars").notNull().default(0),
     latestVersion: text("latestVersion").notNull(),
     createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
     updatedAt: timestamp("updatedAt", { mode: "date" }).notNull().defaultNow(),
@@ -148,15 +146,38 @@ export const purchases = pgTable("purchases", {
   createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
 });
 
+// ---------------------------------------------------------------------------
+// Real usage counters
+//
+// Keyed by (owner, name) as text rather than by packages.id, because most of the
+// catalog is seed packages that live on disk under catalog/<owner>/<name>/ and
+// have no row in `packages`. One table covers both sources, so a package keeps
+// its counts if it later moves from the seed catalog into the database.
+//
+// Every number here is something that actually happened: a download served, or a
+// signed-in user pressing the star button. Nothing seeds or backfills them.
+// ---------------------------------------------------------------------------
+
+export const packageStats = pgTable(
+  "package_stats",
+  {
+    owner: text("owner").notNull(),
+    name: text("name").notNull(),
+    downloads: integer("downloads").notNull().default(0),
+    stars: integer("stars").notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.owner, t.name] })]
+);
+
 export const stars = pgTable(
   "stars",
   {
     userId: text("userId")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    packageId: uuid("packageId")
-      .notNull()
-      .references(() => packages.id, { onDelete: "cascade" }),
+    owner: text("owner").notNull(),
+    name: text("name").notNull(),
+    createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
   },
-  (t) => [primaryKey({ columns: [t.userId, t.packageId] })]
+  (t) => [primaryKey({ columns: [t.userId, t.owner, t.name] })]
 );
