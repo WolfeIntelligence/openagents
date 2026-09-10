@@ -1,24 +1,34 @@
-import { registryUrl, fetchJson, renderTable } from "../util.js";
+import { registryUrl, fetchJson, renderTable, existsSync } from "../util.js";
+import { detectRuntime } from "../runtimes.js";
 
 export async function run(args) {
   const query = args._.join(" ").trim();
   if (!query) {
-    console.error("✗ usage: openagents search <query> [--registry <url>]");
+    console.error("✗ usage: openagents search <query> [--registry <url>] [--json]");
     process.exitCode = 1;
     return;
   }
 
   const registry = registryUrl(args.registry);
+  const runtime = detectRuntime(process.cwd(), existsSync);
   let data;
   try {
-    data = await fetchJson(`${registry}/api/v1/search?q=${encodeURIComponent(query)}`);
+    data = await fetchJson(`${registry}/api/v1/search?q=${encodeURIComponent(query)}`, { runtime });
   } catch (err) {
     console.error(`✗ search failed: ${err.message}`);
     process.exitCode = 1;
     return;
   }
 
+  if (args.json) {
+    console.log(JSON.stringify(data, null, 2));
+    return;
+  }
+
+  // The API is transitioning from a bare array, to {items}, to {items, total}.
   const items = Array.isArray(data) ? data : data.items || [];
+  const total = Array.isArray(data) ? undefined : data.total;
+
   if (items.length === 0) {
     console.log(`No packages found for "${query}".`);
     return;
@@ -34,5 +44,10 @@ export async function run(args) {
       { label: "SUMMARY", get: (r) => r.summary },
     ])
   );
-  console.log(`\n${items.length} package${items.length === 1 ? "" : "s"} found. Install with: openagents add <owner>/<name>`);
+
+  if (typeof total === "number" && total !== items.length) {
+    console.log(`\nshowing ${items.length} of ${total}. Install with: openagents add <owner>/<name>`);
+  } else {
+    console.log(`\n${items.length} package${items.length === 1 ? "" : "s"} found. Install with: openagents add <owner>/<name>`);
+  }
 }
