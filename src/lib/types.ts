@@ -77,6 +77,9 @@ export interface Package {
     stars: number;
   };
   featured: boolean;
+  status: PackageStatus;
+  /** Present when `status` is "deprecated". */
+  deprecation?: { message?: string; replacementId?: string };
   source: "seed" | "db";
   createdAt: string; // ISO
   updatedAt: string; // ISO
@@ -85,7 +88,7 @@ export interface Package {
 /** Lightweight listing card. */
 export type PackageSummary = Pick<
   Package,
-  "id" | "owner" | "name" | "stats" | "featured" | "source" | "updatedAt"
+  "id" | "owner" | "name" | "stats" | "featured" | "status" | "deprecation" | "source" | "updatedAt"
 > & {
   title: string;
   summary: string;
@@ -106,6 +109,9 @@ export interface Creator {
   packageCount: number;
 }
 
+export const PACKAGE_STATUSES = ["pending", "live", "unlisted", "deprecated"] as const;
+export type PackageStatus = (typeof PACKAGE_STATUSES)[number];
+
 export interface CatalogQuery {
   q?: string;
   kind?: PackageKind;
@@ -116,6 +122,9 @@ export interface CatalogQuery {
   sort?: "downloads" | "stars" | "updated" | "name";
   limit?: number;
   offset?: number;
+  /** Include pending/unlisted packages (owner and admin views). Listings default to
+   *  live + deprecated only. */
+  includeHidden?: boolean;
 }
 
 /**
@@ -166,6 +175,8 @@ export function toSummary(p: Package): PackageSummary {
     license: m.license,
     stats: p.stats,
     featured: p.featured,
+    status: p.status,
+    deprecation: p.deprecation,
     source: p.source,
     updatedAt: p.updatedAt,
   };

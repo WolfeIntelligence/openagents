@@ -6,7 +6,7 @@
 // DATABASE_URL is set, but every exported function here degrades gracefully (falls
 // back to the seed catalog, or is a no-op) if getDb() returns null.
 
-import { and, eq, ilike, ne, or, sql } from "drizzle-orm";
+import { and, eq, ilike, inArray, ne, or, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { packageFiles, packages, packageVersions, users } from "@/lib/db/schema";
 import { escapeLike, rankByQuery, tokenize } from "@/lib/search";
@@ -20,6 +20,7 @@ import type {
   Package,
   PackageFile,
   PackageKind,
+  PackageStatus,
   PackageSummary,
   PricingModel,
   RuntimeId,
@@ -59,6 +60,14 @@ function rowToSummary(row: PackageRow): PackageSummary {
     // with the real counts; this layer never stores its own copy. See ./index.
     stats: { downloads: 0, stars: 0 },
     featured: row.featured,
+    status: row.status as PackageStatus,
+    deprecation:
+      row.status === "deprecated"
+        ? {
+            message: row.deprecationMessage ?? undefined,
+            replacementId: row.replacementId ?? undefined,
+          }
+        : undefined,
     source: "db",
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -122,6 +131,14 @@ async function rowToPackage(db: Db, row: PackageRow): Promise<Package> {
       })),
     stats: { downloads: 0, stars: 0 }, // filled in by `withStats` — see ./index
     featured: row.featured,
+    status: row.status as PackageStatus,
+    deprecation:
+      row.status === "deprecated"
+        ? {
+            message: row.deprecationMessage ?? undefined,
+            replacementId: row.replacementId ?? undefined,
+          }
+        : undefined,
     source: "db",
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -137,6 +154,11 @@ async function rowToPackage(db: Db, row: PackageRow): Promise<Package> {
  *  Postgres escape character. */
 function buildWhere(query: CatalogQuery, terms: string[]) {
   const conditions = [];
+  // Pending and unlisted packages never appear in public listings or search; the
+  // owner's own view and the admin queue pass `includeHidden` to see them.
+  if (!query.includeHidden) {
+    conditions.push(inArray(packages.status, ["live", "deprecated"]));
+  }
   if (query.kind) conditions.push(eq(packages.kind, query.kind));
   if (query.runtime) {
     conditions.push(sql`${packages.runtimes} @> ${JSON.stringify([query.runtime])}::jsonb`);
