@@ -120,7 +120,12 @@ export async function installPackage({ owner, name, version, manifest, downloadU
   if (!res.ok || !res.body) {
     if (res.status === 402) {
       const price = util.formatPrice(manifest?.pricing?.amountCents, manifest?.pricing?.currency);
-      console.error(`✗ ${id} is a paid package (${price}). Buy it at ${registry}/p/${owner}/${name}.`);
+      const hasToken = Boolean(util.authHeaders(registry).Authorization);
+      console.error(
+        hasToken
+          ? `✗ ${id} is a paid package (${price}) and your token has not purchased it. Buy it at ${registry}/p/${owner}/${name}, then retry.`
+          : `✗ ${id} is a paid package (${price}). Buy it at ${registry}/p/${owner}/${name}, then run \`openagents login\` and retry.`
+      );
     } else {
       const err = await util.responseError(url, res, "GET");
       console.error(`✗ download failed for ${id}: ${err.message}`);

@@ -12,7 +12,7 @@ const pkg = JSON.parse(readFileSync(path.join(__dirname, "..", "package.json"), 
 const HELP = `openagents ${pkg.version} — CLI for the OpenAgents marketplace
 
 Usage:
-  openagents add <owner/name[@version]> [--runtime <id>] [--registry <url>] [--dir <path>]
+  openagents add <owner/name[@version]> [--runtime <id>] [--registry <url>] [--dir <path>] [--no-deps]
   openagents search <query> [--registry <url>] [--json]
   openagents info <owner/name[@version]> [--registry <url>] [--json]
   openagents list [--dir <path>] [--json]
@@ -61,7 +61,7 @@ Examples:
 
 /** Options each command accepts, for unknown-flag detection ("did you mean"). Booleans included. */
 const KNOWN_OPTIONS = {
-  add: ["runtime", "registry", "dir"],
+  add: ["runtime", "registry", "dir", "no-deps"],
   search: ["registry", "json"],
   info: ["registry", "json"],
   list: ["dir", "json"],

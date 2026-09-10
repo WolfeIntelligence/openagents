@@ -61,7 +61,7 @@ function versionDetail({ owner, name, version, requires = [], status = "live", d
   });
 }
 
-function versionsList({ owner, name, versions }) {
+function versionsList({ versions }) {
   return jsonResponse({ versions: versions.map((version) => ({ version, publishedAt: "2026-01-01T00:00:00.000Z" })) });
 }
 
