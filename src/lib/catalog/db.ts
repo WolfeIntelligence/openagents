@@ -9,6 +9,7 @@
 import { and, eq, ilike, ne, or, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { packageFiles, packages, packageVersions, users } from "@/lib/db/schema";
+import { escapeLike, rankByQuery, tokenize } from "@/lib/search";
 import { CATALOG_ALL_LIMIT } from "@/lib/types";
 import type {
   Catalog,
@@ -26,6 +27,16 @@ import type {
 
 type Db = NonNullable<ReturnType<typeof getDb>>;
 type PackageRow = typeof packages.$inferSelect;
+
+/** Runs a DB-dependent promise, logging once and returning `fallback` instead
+ *  of rejecting if it throws — an unreachable Neon instance or a missing table
+ *  should degrade to the seed catalog's contribution, never 500 the page. */
+function safe<T>(promise: Promise<T>, label: string, fallback: T): Promise<T> {
+  return promise.catch((err: unknown) => {
+    console.error(`[catalog/db] ${label} failed, falling back to seed:`, err);
+    return fallback;
+  });
+}
 
 function rowToSummary(row: PackageRow): PackageSummary {
   return {
@@ -117,7 +128,14 @@ async function rowToPackage(db: Db, row: PackageRow): Promise<Package> {
   };
 }
 
-function buildWhere(db: Db, query: CatalogQuery) {
+/** Builds the merged `WHERE` clause for a catalog query. Each search term is
+ *  ANDed in as its own OR-across-fields condition (title/summary/name/owner/
+ *  tags), so a multi-word `q` like "code review" requires every term to match
+ *  *something*, matching the in-memory semantics in `matchesTerms` (seed.ts).
+ *  Every LIKE pattern is built from `escapeLike` so a literal `%`/`_` in `q`
+ *  can't turn into a wildcard — see search.ts's doc comment on the default
+ *  Postgres escape character. */
+function buildWhere(query: CatalogQuery, terms: string[]) {
   const conditions = [];
   if (query.kind) conditions.push(eq(packages.kind, query.kind));
   if (query.runtime) {
@@ -129,21 +147,32 @@ function buildWhere(db: Db, query: CatalogQuery) {
   if (query.owner) conditions.push(eq(packages.owner, query.owner));
   if (query.price === "free") conditions.push(eq(packages.pricingModel, "free"));
   if (query.price === "paid") conditions.push(ne(packages.pricingModel, "free"));
-  if (query.q) {
-    const like = `%${query.q}%`;
+  for (const term of terms) {
+    const like = `%${escapeLike(term)}%`;
     conditions.push(
       or(
         ilike(packages.title, like),
         ilike(packages.summary, like),
-        ilike(packages.name, like)
+        ilike(packages.name, like),
+        ilike(packages.owner, like),
+        // A hyphenated tag ("code-review") also matches the term "review" —
+        // same hyphen-as-separator rule `matchesTerms` applies in memory.
+        sql`EXISTS (
+          SELECT 1 FROM jsonb_array_elements_text(${packages.tags}) t
+          WHERE t ILIKE ${like} OR REPLACE(t, '-', ' ') ILIKE ${like}
+        )`
       )
     );
   }
   return conditions.length ? and(...conditions) : undefined;
 }
 
-async function queryDbSummaries(db: Db, query: CatalogQuery): Promise<PackageSummary[]> {
-  const where = buildWhere(db, query);
+async function queryDbSummaries(
+  db: Db,
+  query: CatalogQuery,
+  terms: string[]
+): Promise<PackageSummary[]> {
+  const where = buildWhere(query, terms);
   const rows = where
     ? await db.select().from(packages).where(where)
     : await db.select().from(packages);
@@ -186,25 +215,37 @@ export function createDbCatalog(seed: Catalog): Catalog {
         limit: CATALOG_ALL_LIMIT,
         offset: 0,
       };
+      const terms = query.q ? tokenize(query.q) : [];
       const [seedPage, dbSummaries] = await Promise.all([
         seed.list(seedQuery),
-        db ? queryDbSummaries(db, query) : Promise.resolve([]),
+        db ? safe(queryDbSummaries(db, query, terms), "list query", []) : Promise.resolve([]),
       ]);
-      const merged = sortSummaries(mergeSummaries(seedPage.items, dbSummaries), query.sort);
+      const combined = mergeSummaries(seedPage.items, dbSummaries);
+      // No explicit sort and a search query: rank by relevance, same tiering as
+      // the seed catalog, via the one shared helper in ./search. Otherwise keep
+      // the existing name/recency ordering.
+      const merged =
+        terms.length > 0 && !query.sort ? rankByQuery(combined, terms) : sortSummaries(combined, query.sort);
       const offset = query.offset ?? 0;
-      const limit = query.limit ?? merged.length;
+      // `query.limit` is always set by now — `parseCatalogQuery` defaults it, and
+      // internal callers pass CATALOG_ALL_LIMIT explicitly. No default here.
+      const limit = query.limit!;
       return { items: merged.slice(offset, offset + limit), total: merged.length };
     },
 
     async get(owner: string, name: string): Promise<Package | null> {
       const db = getDb();
       if (db) {
-        const [row] = await db
-          .select()
-          .from(packages)
-          .where(and(eq(packages.owner, owner), eq(packages.name, name)))
-          .limit(1);
-        if (row) return rowToPackage(db, row);
+        try {
+          const [row] = await db
+            .select()
+            .from(packages)
+            .where(and(eq(packages.owner, owner), eq(packages.name, name)))
+            .limit(1);
+          if (row) return await rowToPackage(db, row);
+        } catch (err) {
+          console.error(`[catalog/db] get(${owner}/${name}) failed, falling back to seed:`, err);
+        }
       }
       return seed.get(owner, name);
     },
@@ -212,36 +253,43 @@ export function createDbCatalog(seed: Catalog): Catalog {
     async getFile(owner: string, name: string, path: string): Promise<PackageFile | null> {
       const db = getDb();
       if (db) {
-        const [row] = await db
-          .select()
-          .from(packages)
-          .where(and(eq(packages.owner, owner), eq(packages.name, name)))
-          .limit(1);
-        if (row) {
-          const [versionRow] = await db
+        try {
+          const [row] = await db
             .select()
-            .from(packageVersions)
-            .where(
-              and(
-                eq(packageVersions.packageId, row.id),
-                eq(packageVersions.version, row.latestVersion)
-              )
-            )
+            .from(packages)
+            .where(and(eq(packages.owner, owner), eq(packages.name, name)))
             .limit(1);
-          if (versionRow) {
-            const [fileRow] = await db
+          if (row) {
+            const [versionRow] = await db
               .select()
-              .from(packageFiles)
+              .from(packageVersions)
               .where(
-                and(eq(packageFiles.versionId, versionRow.id), eq(packageFiles.path, path))
+                and(
+                  eq(packageVersions.packageId, row.id),
+                  eq(packageVersions.version, row.latestVersion)
+                )
               )
               .limit(1);
-            if (fileRow) {
-              return { path: fileRow.path, size: fileRow.size, content: fileRow.content };
+            if (versionRow) {
+              const [fileRow] = await db
+                .select()
+                .from(packageFiles)
+                .where(
+                  and(eq(packageFiles.versionId, versionRow.id), eq(packageFiles.path, path))
+                )
+                .limit(1);
+              if (fileRow) {
+                return { path: fileRow.path, size: fileRow.size, content: fileRow.content };
+              }
             }
+            // Package exists in DB but file wasn't found there — don't fall through to seed.
+            return null;
           }
-          // Package exists in DB but file wasn't found there — don't fall through to seed.
-          return null;
+        } catch (err) {
+          console.error(
+            `[catalog/db] getFile(${owner}/${name}, ${path}) failed, falling back to seed:`,
+            err
+          );
         }
       }
       return seed.getFile(owner, name, path);
@@ -252,14 +300,22 @@ export function createDbCatalog(seed: Catalog): Catalog {
       const [seedCreator, dbUser, dbPackageCount] = await Promise.all([
         seed.creator(handle),
         db
-          ? db.select().from(users).where(eq(users.handle, handle)).limit(1).then((r) => r[0])
+          ? safe(
+              db.select().from(users).where(eq(users.handle, handle)).limit(1).then((r) => r[0]),
+              `creator(${handle}) user lookup`,
+              undefined
+            )
           : Promise.resolve(undefined),
         db
-          ? db
-              .select({ id: packages.id })
-              .from(packages)
-              .where(eq(packages.owner, handle))
-              .then((r) => r.length)
+          ? safe(
+              db
+                .select({ id: packages.id })
+                .from(packages)
+                .where(eq(packages.owner, handle))
+                .then((r) => r.length),
+              `creator(${handle}) package count`,
+              0
+            )
           : Promise.resolve(0),
       ]);
 
@@ -280,7 +336,11 @@ export function createDbCatalog(seed: Catalog): Catalog {
       const [seedItems, dbRows] = await Promise.all([
         seed.featured(limit * 2),
         db
-          ? db.select().from(packages).where(eq(packages.featured, true))
+          ? safe(
+              db.select().from(packages).where(eq(packages.featured, true)),
+              "featured query",
+              []
+            )
           : Promise.resolve([]),
       ]);
       const merged = sortSummaries(mergeSummaries(seedItems, dbRows.map(rowToSummary)), "updated");
@@ -291,7 +351,9 @@ export function createDbCatalog(seed: Catalog): Catalog {
       const db = getDb();
       const [seedTags, dbRows] = await Promise.all([
         seed.tags(),
-        db ? db.select({ tags: packages.tags }).from(packages) : Promise.resolve([]),
+        db
+          ? safe(db.select({ tags: packages.tags }).from(packages), "tags query", [])
+          : Promise.resolve([]),
       ]);
       const counts = new Map<string, number>();
       for (const { tag, count } of seedTags) counts.set(tag, (counts.get(tag) ?? 0) + count);

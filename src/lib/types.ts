@@ -126,6 +126,16 @@ export interface CatalogQuery {
  */
 export const CATALOG_ALL_LIMIT = 10_000;
 
+/** Default `limit` for a `CatalogQuery` when the caller (or the parsed query
+ *  string) didn't specify one. Applied once in `parseCatalogQuery`, then
+ *  respected — never re-defaulted — by every catalog layer. */
+export const DEFAULT_PAGE_SIZE = 24;
+
+/** Upper bound on a user-supplied `limit`. Only clamps values parsed from a
+ *  query string (see `parseCatalogQuery`) — internal "everything" fetches pass
+ *  `CATALOG_ALL_LIMIT` explicitly and are not subject to this cap. */
+export const MAX_PAGE_SIZE = 100;
+
 export interface CatalogPage {
   items: PackageSummary[];
   total: number;
