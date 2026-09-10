@@ -79,9 +79,10 @@ npx openagents add openagents/pr-reviewer
 ## Publish your own
 
 Free packages are contributed via pull request to the `catalog/` directory; packages
-with a price go through the hosted publish flow and go live immediately once
-validation passes. See [Publishing](/docs/publishing) for both paths and the content
-policy.
+with a price go through the hosted publish flow (or `openagents publish` from the
+CLI, once you've `openagents login`'d — see [CLI Reference](/docs/cli)) and go live
+immediately once validation passes, unless the deployment requires review first. See
+[Publishing](/docs/publishing) for both paths, review mode, and the content policy.
 
 ## Run OpenAgents yourself
 

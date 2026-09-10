@@ -15,9 +15,11 @@ go — the app re-detects what's configured on each request, no build-time flag 
    ```
    npm run db:push
    ```
-   (Use `npm run db:generate` instead if you want migration files checked into
-   `./drizzle` rather than pushing the schema directly; then apply them with your
-   preferred migration step.)
+   This is what the hosted deployment does today. `./drizzle` also carries generated
+   migration files (`npm run db:generate` after any schema edit) for anyone who wants
+   a reviewable, one-file-at-a-time migration path instead — see "Schema migrations"
+   in `src/content/docs/self-hosting.md` for the full workflow and how CI keeps
+   `drizzle/` from drifting out of sync with `src/lib/db/schema.ts`.
 4. Optional: `npm run db:studio` opens Drizzle Studio against `DATABASE_URL` to browse
    data.
 
@@ -104,10 +106,20 @@ https://docs.stripe.com/connect/accounts-v2/account-creation.
 5. Sellers connect their account via `POST /api/connect/onboard` (requires sign-in),
    which returns a Stripe-hosted onboarding link.
 
+## 4. Moderation, review, and analytics (optional)
+
+| Variable | Effect |
+|---|---|
+| `ADMIN_HANDLES` | Comma-separated handles granted `/admin` access, alongside any user with `users.isAdmin` set in the database. |
+| `REQUIRE_REVIEW` | `1` to hold newly published packages as `pending` until an admin approves them from `/admin`. |
+| `DOWNLOAD_HASH_SALT` | Salts the per-day, per-client hash used to dedupe download counts. |
+| `SENTRY_DSN` | When set, errors are also forwarded to Sentry in addition to the always-on stderr log — see `src/instrumentation.ts` / `src/lib/monitoring.ts`. |
+
 ## Commands reference
 
 | command             | purpose                                      |
 |----------------------|----------------------------------------------|
-| `npm run db:generate` | generate SQL migration files into `./drizzle` |
-| `npm run db:push`     | push the Drizzle schema straight to `DATABASE_URL` |
+| `npm run db:generate` | diff `src/lib/db/schema.ts` against `./drizzle` and write a new migration file if it changed (offline, no `DATABASE_URL` needed) |
+| `npm run db:push`     | push the Drizzle schema straight to `DATABASE_URL` — what the hosted deployment uses today |
 | `npm run db:studio`   | open Drizzle Studio against `DATABASE_URL`    |
+| `npx drizzle-kit check` | verify `./drizzle`'s migration journal/snapshots are internally consistent (does **not** detect drift against the live schema — CI uses `db:generate` + `git diff` for that) |

@@ -16,14 +16,28 @@ import { StarButton } from "@/components/StarButton";
 import { isStarred } from "@/lib/stats";
 import { isDbEnabled } from "@/lib/db/client";
 import { formatPrice } from "@/lib/format";
+import { getRequester } from "@/lib/requester";
+import { isAdmin } from "@/lib/admin";
+import { packageHasPurchases } from "@/lib/moderation";
+import { StatusBadge } from "@/components/StatusBadge";
+import { DeprecationBanner } from "@/components/DeprecationBanner";
+import { OwnerActions } from "@/components/OwnerActions";
+import { ReportButton } from "@/components/ReportButton";
+import { ReviewsTab } from "@/components/ReviewsTab";
+import { RatingStars } from "@/components/RatingStars";
+import { StatsPanel } from "@/components/StatsPanel";
+import { RelatedPackages } from "@/components/RelatedPackages";
 
 type Params = { owner: string; name: string };
-type TabId = "readme" | "files" | "manifest" | "versions";
+type TabId = "readme" | "files" | "manifest" | "versions" | "reviews";
 const TABS: { id: TabId; label: string }[] = [
   { id: "readme", label: "Readme" },
   { id: "files", label: "Files" },
   { id: "manifest", label: "Manifest" },
   { id: "versions", label: "Versions" },
+  // Reviews need somewhere to be stored — hide the tab entirely rather than
+  // show an empty/broken one when this deployment has no database.
+  ...(isDbEnabled() ? [{ id: "reviews" as const, label: "Reviews" }] : []),
 ];
 
 async function loadPackage(owner: string, name: string) {
@@ -58,6 +72,18 @@ export default async function PackagePage({
   const pkg = await loadPackage(owner, name);
   if (!pkg) notFound();
 
+  // Visibility gate (G-M2): pending/unlisted packages render only for their
+  // owner or an admin; everyone else gets the same 404 as a nonexistent
+  // package. `requester`/`viewerIsAdmin`/`viewerIsOwner` are computed once
+  // here and reused below to drive the owner action panel.
+  const requester = await getRequester();
+  const viewerIsAdmin = await isAdmin(requester);
+  const viewerIsOwner = Boolean(requester?.handle && requester.handle === pkg.owner);
+  if ((pkg.status === "pending" || pkg.status === "unlisted") && !viewerIsOwner && !viewerIsAdmin) {
+    notFound();
+  }
+  const hasPurchases = await packageHasPurchases(pkg.owner, pkg.name);
+
   const catalog = await getCatalog();
   const creator = await catalog.creator(owner);
 
@@ -91,6 +117,8 @@ export default async function PackagePage({
           <h1 className="text-2xl font-semibold text-fg">{manifest.title}</h1>
           <KindBadge kind={manifest.kind} />
           <PricingBadge pricing={manifest.pricing} />
+          <StatusBadge status={pkg.status} />
+          <ReportButton owner={owner} name={name} />
         </div>
         <p className="mt-2 max-w-2xl text-sm text-fg-muted">{manifest.summary}</p>
         <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-fg-subtle">
@@ -107,6 +135,29 @@ export default async function PackagePage({
             </>
           )}
         </div>
+        {pkg.status === "deprecated" && (
+          <div className="mt-4">
+            <DeprecationBanner
+              message={pkg.deprecation?.message}
+              replacementId={pkg.deprecation?.replacementId}
+            />
+          </div>
+        )}
+        {(viewerIsOwner || viewerIsAdmin) && (
+          <div className="mt-4">
+            <OwnerActions
+              owner={owner}
+              name={name}
+              status={pkg.status}
+              featured={pkg.featured}
+              deprecationMessage={pkg.deprecation?.message}
+              replacementId={pkg.deprecation?.replacementId}
+              viewerIsOwner={viewerIsOwner}
+              viewerIsAdmin={viewerIsAdmin}
+              hasPurchases={hasPurchases}
+            />
+          </div>
+        )}
       </div>
 
       <div className="mt-6 flex flex-col gap-8 lg:flex-row">
@@ -187,7 +238,19 @@ export default async function PackagePage({
               <FilesTab owner={owner} name={name} files={pkg.files} canReadFile={access.canReadFile} />
             )}
             {activeTab === "manifest" && <ManifestTab manifest={manifest} />}
-            {activeTab === "versions" && <VersionsTab versions={pkg.versions} />}
+            {activeTab === "versions" && (
+              <VersionsTab
+                owner={owner}
+                name={name}
+                entry={manifest.entry}
+                canDownload={owns}
+                canReadEntry={access.canReadFile(manifest.entry)}
+                versions={pkg.versions}
+              />
+            )}
+            {activeTab === "reviews" && (
+              <ReviewsTab owner={owner} name={name} isOwner={isOwner} userId={session?.user?.id} userHandle={session?.user?.handle} />
+            )}
           </div>
         </div>
 
@@ -216,28 +279,13 @@ export default async function PackagePage({
             </SidebarSection>
 
             <SidebarSection title="Stats">
-              <dl className="flex flex-col gap-1.5 text-sm">
-                <div className="flex justify-between">
-                  <dt className="text-fg-muted">Stars</dt>
-                  <dd className="font-mono text-fg">
-                    {pkg.stats.stars > 0 ? pkg.stats.stars.toLocaleString() : "None yet"}
-                  </dd>
-                </div>
-                <div className="flex justify-between">
-                  <dt className="text-fg-muted">Downloads</dt>
-                  <dd className="font-mono text-fg">
-                    {pkg.stats.downloads > 0 ? pkg.stats.downloads.toLocaleString() : "None yet"}
-                  </dd>
-                </div>
-                <div className="flex justify-between">
-                  <dt className="text-fg-muted">Updated</dt>
-                  <dd className="text-fg">{new Date(pkg.updatedAt).toLocaleDateString()}</dd>
-                </div>
-                <div className="flex justify-between">
-                  <dt className="text-fg-muted">Source</dt>
-                  <dd className="text-fg">{pkg.source}</dd>
-                </div>
-              </dl>
+              <StatsPanel
+                owner={owner}
+                name={name}
+                stats={pkg.stats}
+                updatedAt={pkg.updatedAt}
+                source={pkg.source}
+              />
             </SidebarSection>
 
             <SidebarSection title="Creator">
@@ -257,7 +305,44 @@ export default async function PackagePage({
                   </span>
                 </span>
               </Link>
+              {creator?.bio && <p className="mt-2 text-sm text-fg-muted">{creator.bio}</p>}
+              {creator?.url && (
+                <a
+                  href={creator.url}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="mt-1.5 block truncate text-xs text-accent hover:text-accent-hover"
+                >
+                  {creator.url.replace(/^https?:\/\//, "")}
+                </a>
+              )}
+              {(pkg.stats.stars > 0 || pkg.stats.downloads > 0 || pkg.stats.ratingCount) && (
+                <dl className="mt-3 flex flex-col gap-1.5 text-sm">
+                  {pkg.stats.stars > 0 && (
+                    <div className="flex justify-between">
+                      <dt className="text-fg-muted">Stars</dt>
+                      <dd className="font-mono text-fg">{pkg.stats.stars.toLocaleString()}</dd>
+                    </div>
+                  )}
+                  {pkg.stats.downloads > 0 && (
+                    <div className="flex justify-between">
+                      <dt className="text-fg-muted">Downloads</dt>
+                      <dd className="font-mono text-fg">{pkg.stats.downloads.toLocaleString()}</dd>
+                    </div>
+                  )}
+                  {pkg.stats.ratingCount ? (
+                    <div className="flex items-center justify-between">
+                      <dt className="text-fg-muted">Rating</dt>
+                      <dd>
+                        <RatingStars average={pkg.stats.ratingAverage} count={pkg.stats.ratingCount} />
+                      </dd>
+                    </div>
+                  ) : null}
+                </dl>
+              )}
             </SidebarSection>
+
+            <RelatedPackages owner={owner} name={name} />
           </div>
         </aside>
       </div>
@@ -315,8 +400,78 @@ async function FilesTab({
   if (allFiles.length === 0) {
     return <p className="text-sm text-fg-muted">No files listed.</p>;
   }
+
+  // G-C4: group by top-level folder so a package with a `scripts/` or
+  // `templates/` subtree doesn't read as one long flat list. Root-level files
+  // (openagent.yaml, README.md, a bare entry file) have no folder to group
+  // into, so they render first as their own ungrouped table.
+  const root: { path: string; size: number }[] = [];
+  const folders = new Map<string, { path: string; size: number }[]>();
+  for (const file of allFiles) {
+    const slash = file.path.indexOf("/");
+    if (slash === -1) {
+      root.push(file);
+    } else {
+      const folder = file.path.slice(0, slash);
+      if (!folders.has(folder)) folders.set(folder, []);
+      folders.get(folder)!.push(file);
+    }
+  }
+  root.sort((a, b) => a.path.localeCompare(b.path));
+  const sortedFolders = Array.from(folders.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  for (const [, list] of sortedFolders) list.sort((a, b) => a.path.localeCompare(b.path));
+
   return (
-    <div className="overflow-x-auto rounded-lg border border-border">
+    <div className="flex flex-col gap-4">
+      {root.length > 0 && (
+        <FileTable
+          rows={root.map((file) => ({ file, label: file.path }))}
+          owner={owner}
+          name={name}
+          canReadFile={canReadFile}
+        />
+      )}
+      {sortedFolders.map(([folder, list]) => (
+        // Open by default (G-C4): folder grouping should make a large file
+        // list easier to scan, not hide files behind an extra click.
+        <details key={folder} open className="overflow-hidden rounded-lg border border-border">
+          <summary className="cursor-pointer list-none bg-surface px-4 py-2 text-sm font-medium text-fg [&::-webkit-details-marker]:hidden">
+            <span aria-hidden="true" className="mr-1.5 inline-block text-fg-subtle">
+              &#9656;
+            </span>
+            <span className="font-mono">{folder}/</span>
+            <span className="ml-2 text-xs font-normal text-fg-subtle">
+              {list.length} file{list.length === 1 ? "" : "s"}
+            </span>
+          </summary>
+          <FileTable
+            rows={list.map((file) => ({ file, label: file.path.slice(folder.length + 1) }))}
+            owner={owner}
+            name={name}
+            canReadFile={canReadFile}
+            bordered={false}
+          />
+        </details>
+      ))}
+    </div>
+  );
+}
+
+function FileTable({
+  rows,
+  owner,
+  name,
+  canReadFile,
+  bordered = true,
+}: {
+  rows: { file: { path: string; size: number }; label: string }[];
+  owner: string;
+  name: string;
+  canReadFile: (path: string) => boolean;
+  bordered?: boolean;
+}) {
+  return (
+    <div className={`overflow-x-auto ${bordered ? "rounded-lg border border-border" : "border-t border-border"}`}>
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-border bg-surface text-left">
@@ -325,7 +480,7 @@ async function FilesTab({
           </tr>
         </thead>
         <tbody>
-          {allFiles.map((file) => {
+          {rows.map(({ file, label }) => {
             const locked = !canReadFile(file.path);
             return (
               <tr key={file.path} className="border-b border-border last:border-0">
@@ -334,7 +489,7 @@ async function FilesTab({
                     href={`/p/${owner}/${name}/files/${file.path}`}
                     className="font-mono text-accent hover:text-accent-hover"
                   >
-                    {file.path}
+                    {label}
                   </Link>
                   {locked && (
                     <span className="ml-2 rounded border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-fg-subtle">
@@ -439,8 +594,22 @@ function ManifestTab({
 }
 
 function VersionsTab({
+  owner,
+  name,
+  entry,
+  canDownload,
+  canReadEntry,
   versions,
 }: {
+  owner: string;
+  name: string;
+  /** `manifest.entry` — used for the per-version "Files" link (S4/G-V1). */
+  entry: string;
+  /** Whether the viewer may fetch a tarball at all (paywall gate). */
+  canDownload: boolean;
+  /** Whether the viewer may read `entry` specifically (preview paths on a
+   *  paid package stay readable even when `canDownload` is false). */
+  canReadEntry: boolean;
   versions: { version: string; publishedAt: string; changelog?: string }[];
 }) {
   if (versions.length === 0) {
@@ -457,6 +626,30 @@ function VersionsTab({
             </span>
           </div>
           {v.changelog && <p className="mt-1.5 text-sm text-fg-muted">{v.changelog}</p>}
+          {/* Per-version actions (S4/G-V1). The Files link points at the raw-file
+              API rather than the file-viewer page — that page is owned by
+              another workstream and doesn't take a `?version=` param yet. */}
+          <div className="mt-2 flex flex-wrap items-center gap-3 text-xs">
+            {canDownload && (
+              <a
+                href={`/api/v1/packages/${owner}/${name}/versions/${v.version}/download`}
+                className="font-medium text-accent hover:underline"
+              >
+                Download
+              </a>
+            )}
+            {canReadEntry && (
+              <a
+                href={`/api/v1/packages/${owner}/${name}/files/${entry}?version=${v.version}`}
+                className="text-fg-muted hover:text-fg hover:underline"
+              >
+                Files
+              </a>
+            )}
+          </div>
+          <p className="mt-2 rounded-md bg-surface-hover px-2 py-1 font-mono text-xs text-fg-muted">
+            npx openagents add {owner}/{name}@{v.version}
+          </p>
         </li>
       ))}
     </ul>

@@ -80,7 +80,11 @@ function withStats(inner: Catalog): Catalog {
     const map = await getStats(items.map((i) => ({ owner: i.owner, name: i.name })));
     return items.map((item) => ({
       ...item,
-      stats: map.get(statsKey(item.owner, item.name)) ?? ZERO_STATS,
+      // Merge, don't replace: `sort=trending` (catalog/db.ts) may have already
+      // stamped a real `stats.trending` count onto this item, and a wholesale
+      // replace here would silently discard it. downloads/stars/rating always
+      // come from this authoritative source either way.
+      stats: { ...item.stats, ...(map.get(statsKey(item.owner, item.name)) ?? ZERO_STATS) },
     }));
   }
 
@@ -94,7 +98,7 @@ function withStats(inner: Catalog): Catalog {
       // reads an absent limit as its default page size, which would drop every
       // package past that page before the re-sort ever saw it.
       if (query.sort === "downloads" || query.sort === "stars") {
-        const { items, total } = await inner.list({
+        const { items, total, correctedQuery } = await inner.list({
           ...query,
           limit: CATALOG_ALL_LIMIT,
           offset: 0,
@@ -125,7 +129,7 @@ function withStats(inner: Catalog): Catalog {
         // explicitly for "everything" fetches. No per-layer default here.
         const offset = query.offset ?? 0;
         const limit = query.limit!;
-        return { items: decorated.slice(offset, offset + limit), total };
+        return { items: decorated.slice(offset, offset + limit), total, correctedQuery };
       }
 
       const page = await inner.list(query);
@@ -146,6 +150,11 @@ function withStats(inner: Catalog): Catalog {
     getFile: inner.getFile,
     creator: inner.creator,
     tags: inner.tags,
+    // Facet counts don't need stats decoration (they're counts, not package
+    // cards) — pass straight through. Stays `undefined` if `inner` doesn't
+    // implement it, which is exactly what the optional `Catalog.facets?`
+    // contract expects.
+    facets: inner.facets,
 
     async featured(limit?: number): Promise<PackageSummary[]> {
       return decorate(await inner.featured(limit));
@@ -163,7 +172,12 @@ function readParam(params: SearchParamsLike, key: string): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
-const SORTS = ["downloads", "stars", "updated", "name"] as const;
+// "trending" (G-S4) is resolved entirely inside each catalog's own `list()`
+// (see `sortByTrending` in `catalog/db.ts`) rather than here in `withStats`,
+// because trending is a 7-day download_events count, not the lifetime
+// downloads/stars this decorator attaches — it needs no post-decoration
+// re-sort the way "downloads"/"stars" do below.
+const SORTS = ["downloads", "stars", "updated", "name", "trending"] as const;
 
 /** Parses/validates raw query params (from a URL or a Next.js `searchParams`) into a `CatalogQuery`. Unknown/invalid enum values are dropped rather than throwing. */
 export function parseCatalogQuery(searchParams: SearchParamsLike): CatalogQuery {
@@ -210,6 +224,9 @@ export function parseCatalogQuery(searchParams: SearchParamsLike): CatalogQuery 
     const n = Number(offset);
     if (Number.isFinite(n) && n >= 0) query.offset = Math.floor(n);
   }
+
+  // `?facets=1` (G-S3) — anything else (missing, "0", "false", garbage) is "no".
+  if (readParam(searchParams, "facets") === "1") query.facets = true;
 
   return query;
 }

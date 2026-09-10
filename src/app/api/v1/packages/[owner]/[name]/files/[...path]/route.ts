@@ -1,9 +1,11 @@
 import { NextRequest } from "next/server";
 import { getCatalog } from "@/lib/catalog";
+import { getFileAtVersion, getPackageVersion } from "@/lib/catalog/versions";
 import { auth } from "@/lib/auth";
 import { resolveAccess } from "@/lib/access";
 import { error, json, preflight, withCors } from "@/lib/api";
 import { clientIp, rateLimit } from "@/lib/ratelimit";
+import type { Package, PackageFile } from "@/lib/types";
 
 export const runtime = "nodejs";
 
@@ -30,9 +32,11 @@ function contentTypeFor(filePath: string): string {
   }
 }
 
-// GET /api/v1/packages/[owner]/[name]/files/[...path] — raw file text.
-// Paid packages only serve `access.PREVIEW_PATHS` for free (B2); everything else
-// requires the requester to be the owner or a paid purchaser.
+// GET /api/v1/packages/[owner]/[name]/files/[...path] — raw file text, either
+// from the package's latest version (default) or a specific published version
+// via `?version=` (S4/G-V1). Paid packages only serve `access.PREVIEW_PATHS`
+// for free (B2); everything else requires the requester to be the owner or a
+// paid purchaser.
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ owner: string; name: string; path: string[] }> }
@@ -47,20 +51,31 @@ export async function GET(
 
   const { owner, name, path } = await params;
   const filePath = path.join("/");
-  const catalog = await getCatalog();
-  const file = await catalog.getFile(owner, name, filePath);
+  const version = request.nextUrl.searchParams.get("version");
+
+  let pkg: Package | null;
+  let file: PackageFile | null;
+  if (version) {
+    pkg = await getPackageVersion(owner, name, version);
+    file = pkg ? await getFileAtVersion(owner, name, version, filePath) : null;
+  } else {
+    const catalog = await getCatalog();
+    pkg = await catalog.get(owner, name);
+    file = pkg ? await catalog.getFile(owner, name, filePath) : null;
+  }
+
+  // Checked before the file lookup's result so an unknown version reports
+  // "version not found" rather than the less specific "file not found".
+  if (!pkg) {
+    return error(
+      404,
+      version ? `version not found: ${owner}/${name}@${version}` : `package not found: ${owner}/${name}`
+    );
+  }
   if (!file || file.content === undefined) {
     return error(404, `file not found: ${filePath}`);
   }
 
-  // The file list is public in the package manifest either way (the Files tab
-  // shows every path), so checking existence before the paywall doesn't leak
-  // anything a purchase page wouldn't already show — keep the order simple:
-  // 404 for unknown files, then 402 for gated ones.
-  const pkg = await catalog.get(owner, name);
-  if (!pkg) {
-    return error(404, `package not found: ${owner}/${name}`);
-  }
   const session = await auth();
   const access = await resolveAccess(pkg, session);
   if (!access.canReadFile(filePath)) {
@@ -73,9 +88,16 @@ export async function GET(
       headers: {
         "Content-Type": `${contentTypeFor(filePath)}; charset=utf-8`,
         "X-Content-Type-Options": "nosniff",
-        // Free-package files are identical for everyone; paid-package files
-        // vary by requester (200 vs 402) and must never be cached or shared.
-        "Cache-Control": access.isFree ? "public, max-age=300" : "private, no-store",
+        // Free-package files are identical for everyone. A pinned version's
+        // files never change once published, so that case is cacheable for a
+        // year (G-V4); "latest" can change as new versions are published, so
+        // it keeps the old short TTL. Paid-package files vary by requester
+        // (200 vs 402) either way and must never be cached or shared.
+        "Cache-Control": access.isFree
+          ? version
+            ? "public, max-age=31536000, immutable"
+            : "public, max-age=300"
+          : "private, no-store",
       },
     })
   );

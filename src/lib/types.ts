@@ -75,8 +75,20 @@ export interface Package {
   stats: {
     downloads: number;
     stars: number;
+    /** Mean review rating (1..5); absent until the package has a review. */
+    ratingAverage?: number;
+    ratingCount?: number;
+    /** Unique downloads in the last 7 days (G-S4) — only ever populated by
+     *  `sortByTrending` in `catalog/db.ts` when `sort=trending` was actually
+     *  requested; absent otherwise (never a made-up zero). See the merge (not
+     *  replace) in `withStats`'s `decorate()` in `catalog/index.ts`, which is
+     *  what keeps this from being clobbered by the downloads/stars decorator. */
+    trending?: number;
   };
   featured: boolean;
+  status: PackageStatus;
+  /** Present when `status` is "deprecated". */
+  deprecation?: { message?: string; replacementId?: string };
   source: "seed" | "db";
   createdAt: string; // ISO
   updatedAt: string; // ISO
@@ -85,7 +97,7 @@ export interface Package {
 /** Lightweight listing card. */
 export type PackageSummary = Pick<
   Package,
-  "id" | "owner" | "name" | "stats" | "featured" | "source" | "updatedAt"
+  "id" | "owner" | "name" | "stats" | "featured" | "status" | "deprecation" | "source" | "updatedAt"
 > & {
   title: string;
   summary: string;
@@ -106,6 +118,9 @@ export interface Creator {
   packageCount: number;
 }
 
+export const PACKAGE_STATUSES = ["pending", "live", "unlisted", "deprecated"] as const;
+export type PackageStatus = (typeof PACKAGE_STATUSES)[number];
+
 export interface CatalogQuery {
   q?: string;
   kind?: PackageKind;
@@ -113,9 +128,20 @@ export interface CatalogQuery {
   price?: "free" | "paid";
   tag?: string;
   owner?: string;
-  sort?: "downloads" | "stars" | "updated" | "name";
+  /** "trending" = unique downloads in the last 7 days (G-S4); zero DB support
+   *  means zero events recorded, which degrades to "updated" ordering — see
+   *  the comment on `sortByTrending` in `catalog/db.ts`. */
+  sort?: "downloads" | "stars" | "updated" | "name" | "trending";
   limit?: number;
   offset?: number;
+  /** Include pending/unlisted packages (owner and admin views). Listings default to
+   *  live + deprecated only. */
+  includeHidden?: boolean;
+  /** Set from `?facets=1` — asks `Catalog.facets()` to be worth computing for
+   *  this request. Parsed here (like every other query flag) even though only
+   *  the `/api/v1/packages` route reads it, so there's one query-parsing entry
+   *  point (see `parseCatalogQuery`). */
+  facets?: boolean;
 }
 
 /**
@@ -139,6 +165,24 @@ export const MAX_PAGE_SIZE = 100;
 export interface CatalogPage {
   items: PackageSummary[];
   total: number;
+  /** Set only when the requested `q` had zero hits and a typo-tolerant retry
+   *  (Damerau-Levenshtein distance <=1 against the catalog's own name/tag
+   *  vocabulary) found a corrected query that did match — see `search.ts`'s
+   *  `buildCorrectedQuery`. `items`/`total` above already reflect the
+   *  corrected query; the UI shows "Showing results for {correctedQuery}". */
+  correctedQuery?: string;
+}
+
+/** Facet counts for the *current* filtered query (G-S3) — computed the way
+ *  e-commerce facets work: each dimension's own counts are computed as if
+ *  that dimension's filter were removed (so picking "Free" doesn't collapse
+ *  the "Paid" count to zero), while every *other* active filter still
+ *  applies. `tags` is capped to the top 20 by count. */
+export interface FacetCounts {
+  kind: Partial<Record<PackageKind, number>>;
+  runtime: Partial<Record<RuntimeId, number>>;
+  price: { free: number; paid: number };
+  tags: { tag: string; count: number }[];
 }
 
 export interface Catalog {
@@ -148,6 +192,9 @@ export interface Catalog {
   creator(handle: string): Promise<Creator | null>;
   featured(limit?: number): Promise<PackageSummary[]>;
   tags(): Promise<{ tag: string; count: number }[]>;
+  /** Optional: not every catalog implementation needs to support facets
+   *  (see G-S3). Callers use `catalog.facets?.(query)`. */
+  facets?(query?: CatalogQuery): Promise<FacetCounts>;
 }
 
 export function toSummary(p: Package): PackageSummary {
@@ -166,6 +213,8 @@ export function toSummary(p: Package): PackageSummary {
     license: m.license,
     stats: p.stats,
     featured: p.featured,
+    status: p.status,
+    deprecation: p.deprecation,
     source: p.source,
     updatedAt: p.updatedAt,
   };

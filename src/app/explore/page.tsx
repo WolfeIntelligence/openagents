@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { getCatalog, parseCatalogQuery } from "@/lib/catalog";
-import { PACKAGE_KINDS, RUNTIME_IDS, type CatalogQuery } from "@/lib/types";
+import { PACKAGE_KINDS, RUNTIME_IDS, type CatalogQuery, type FacetCounts } from "@/lib/types";
 import { KIND_META, RUNTIMES } from "@/lib/runtimes";
 import { PackageCard } from "@/components/PackageCard";
 import { SortSelect } from "@/components/SortSelect";
@@ -66,9 +66,11 @@ export default async function ExplorePage({
   const query = parseCatalogQuery(rawParams);
   const requestedPage = Math.max(1, Number(rawParams.page) || 1);
 
-  const [initialResult, tags] = await Promise.all([
+  const [initialResult, facets] = await Promise.all([
     catalog.list({ ...query, limit: PAGE_SIZE, offset: (requestedPage - 1) * PAGE_SIZE }),
-    catalog.tags(),
+    // G-S3: counts for the current filtered query, each dimension computed as
+    // if its own filter were removed — see the FacetCounts doc comment.
+    catalog.facets?.(query)?.catch(() => undefined),
   ]);
 
   const totalPages = Math.max(1, Math.ceil(initialResult.total / PAGE_SIZE));
@@ -78,7 +80,6 @@ export default async function ExplorePage({
     ? await catalog.list({ ...query, limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE })
     : initialResult;
 
-  const topTags = tags.slice(0, 20);
   const filters = activeFilters(query);
 
   return (
@@ -94,16 +95,12 @@ export default async function ExplorePage({
             Filters{filters.length > 0 ? ` (${filters.length})` : ""}
           </summary>
           <div className="border-t border-border px-4 py-4">
-            <FiltersContent
-              rawParams={rawParams}
-              query={query}
-              topTags={topTags}
-            />
+            <FiltersContent rawParams={rawParams} query={query} facets={facets} />
           </div>
         </details>
 
         <aside className="hidden shrink-0 lg:block lg:w-56" aria-label="Filters">
-          <FiltersContent rawParams={rawParams} query={query} topTags={topTags} />
+          <FiltersContent rawParams={rawParams} query={query} facets={facets} />
         </aside>
 
         <div className="min-w-0 flex-1">
@@ -148,6 +145,15 @@ export default async function ExplorePage({
             </p>
           )}
 
+          {result.correctedQuery && (
+            // G-S1 typo tolerance: "{query.q}" itself had zero hits; this is
+            // the corrected query that did match.
+            <p className="mb-5 rounded-md border border-border bg-surface px-3 py-2 text-sm text-fg-muted">
+              No results for &ldquo;{query.q}&rdquo; &mdash; showing results for{" "}
+              <span className="font-medium text-fg">&ldquo;{result.correctedQuery}&rdquo;</span> instead.
+            </p>
+          )}
+
           {result.total > 0 ? (
             <>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -188,12 +194,28 @@ export default async function ExplorePage({
 function FiltersContent({
   rawParams,
   query,
-  topTags,
+  facets,
 }: {
   rawParams: RawSearchParams;
   query: CatalogQuery;
-  topTags: { tag: string; count: number }[];
+  facets?: FacetCounts;
 }) {
+  // Kind/runtime options with a zero count (for the *other* active filters)
+  // are hidden rather than shown as a dead end — same e-commerce-facet
+  // convention as the tag list already followed. The currently-active value
+  // always stays visible even if its own removed-filter count is zero, so a
+  // user can still back out of it. Without facet data (no `facets()` on this
+  // catalog), every option shows, matching the pre-G-S3 behaviour.
+  const kinds = PACKAGE_KINDS.filter(
+    (kind) => !facets || query.kind === kind || (facets.kind[kind] ?? 0) > 0
+  );
+  const runtimes = RUNTIME_IDS.filter(
+    (id) => !facets || query.runtime === id || (facets.runtime[id] ?? 0) > 0
+  );
+  const showFree = !facets || query.price === "free" || facets.price.free > 0;
+  const showPaid = !facets || query.price === "paid" || facets.price.paid > 0;
+  const tags = facets?.tags ?? [];
+
   return (
     <>
       <FilterGroup title="Kind">
@@ -202,12 +224,13 @@ function FiltersContent({
           active={!query.kind}
           label="All kinds"
         />
-        {PACKAGE_KINDS.map((kind) => (
+        {kinds.map((kind) => (
           <FilterLink
             key={kind}
             href={buildFilterHref(rawParams, "kind", kind)}
             active={query.kind === kind}
             label={KIND_META[kind]?.label ?? kind}
+            count={facets?.kind[kind]}
           />
         ))}
       </FilterGroup>
@@ -218,12 +241,13 @@ function FiltersContent({
           active={!query.runtime}
           label="All runtimes"
         />
-        {RUNTIME_IDS.map((id) => (
+        {runtimes.map((id) => (
           <FilterLink
             key={id}
             href={buildFilterHref(rawParams, "runtime", id)}
             active={query.runtime === id}
             label={RUNTIMES[id]?.label ?? id}
+            count={facets?.runtime[id]}
           />
         ))}
       </FilterGroup>
@@ -234,31 +258,38 @@ function FiltersContent({
           active={!query.price}
           label="All prices"
         />
-        <FilterLink
-          href={buildFilterHref(rawParams, "price", "free")}
-          active={query.price === "free"}
-          label="Free"
-        />
-        <FilterLink
-          href={buildFilterHref(rawParams, "price", "paid")}
-          active={query.price === "paid"}
-          label="Paid"
-        />
+        {showFree && (
+          <FilterLink
+            href={buildFilterHref(rawParams, "price", "free")}
+            active={query.price === "free"}
+            label="Free"
+            count={facets?.price.free}
+          />
+        )}
+        {showPaid && (
+          <FilterLink
+            href={buildFilterHref(rawParams, "price", "paid")}
+            active={query.price === "paid"}
+            label="Paid"
+            count={facets?.price.paid}
+          />
+        )}
       </FilterGroup>
 
-      {topTags.length > 0 && (
+      {tags.length > 0 && (
         <FilterGroup title="Tags">
           <FilterLink
             href={buildFilterHref(rawParams, "tag", undefined)}
             active={!query.tag}
             label="All tags"
           />
-          {topTags.map(({ tag, count }) => (
+          {tags.map(({ tag, count }) => (
             <FilterLink
               key={tag}
               href={buildFilterHref(rawParams, "tag", tag)}
               active={query.tag === tag}
-              label={`${tag} (${count})`}
+              label={tag}
+              count={count}
             />
           ))}
         </FilterGroup>
@@ -278,19 +309,33 @@ function FilterGroup({ title, children }: { title: string; children: ReactNode }
   );
 }
 
-function FilterLink({ href, active, label }: { href: string; active: boolean; label: string }) {
+function FilterLink({
+  href,
+  active,
+  label,
+  count,
+}: {
+  href: string;
+  active: boolean;
+  label: string;
+  /** Facet count (G-S3) — omitted when this catalog has no `facets()`. */
+  count?: number;
+}) {
   return (
     <li>
       <Link
         href={href}
         aria-current={active ? "true" : undefined}
-        className={`block truncate rounded-md px-2 py-1.5 text-sm ${
+        className={`flex items-center justify-between gap-2 truncate rounded-md px-2 py-1.5 text-sm ${
           active
             ? "bg-accent-muted font-medium text-accent"
             : "text-fg-muted hover:bg-surface-hover hover:text-fg"
         }`}
       >
-        {label}
+        <span className="truncate">{label}</span>
+        {count !== undefined && (
+          <span className="shrink-0 font-mono text-xs text-fg-subtle">{count}</span>
+        )}
       </Link>
     </li>
   );

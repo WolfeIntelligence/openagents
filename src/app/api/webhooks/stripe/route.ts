@@ -4,7 +4,12 @@ import { getConnectedAccountStatus, getStripe, isStripeEnabled } from "@/lib/str
 import { eq } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { users } from "@/lib/db/schema";
-import { markSessionFailed, recordPaidPurchase, setStatusByPaymentIntent } from "@/lib/purchases";
+import {
+  markSessionFailed,
+  recordPaidPurchase,
+  resolveReceiptUrl,
+  setStatusByPaymentIntent,
+} from "@/lib/purchases";
 
 /** Extracts a PaymentIntent id whether the field came back expanded or not. */
 function paymentIntentId(pi: string | Stripe.PaymentIntent | null | undefined): string | undefined {
@@ -84,13 +89,17 @@ export async function POST(req: NextRequest) {
       const db = getDb();
       if (db && packageId && buyerUserId) {
         try {
+          const stripePaymentIntent = paymentIntentId(checkoutSession.payment_intent);
+          // Best-effort — a receipt lookup failure must never drop the sale itself.
+          const receiptUrl = await resolveReceiptUrl(stripe, stripePaymentIntent);
           await recordPaidPurchase(db, {
             userId: buyerUserId,
             packageId,
             stripeSessionId: checkoutSession.id,
-            stripePaymentIntent: paymentIntentId(checkoutSession.payment_intent),
+            stripePaymentIntent,
             amountCents: checkoutSession.amount_total ?? 0,
             currency: checkoutSession.currency,
+            receiptUrl,
           });
         } catch {
           // DB write failed — ask Stripe to retry rather than silently dropping a sale.

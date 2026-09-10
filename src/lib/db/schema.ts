@@ -37,6 +37,9 @@ export const users = pgTable("user", {
   bio: text("bio"),
   stripeAccountId: text("stripeAccountId"),
   stripeOnboarded: boolean("stripeOnboarded").notNull().default(false),
+  website: text("website"),
+  // Moderation role. Granted by hand (or via ADMIN_HANDLES env) — there is no UI to grant it.
+  isAdmin: boolean("isAdmin").notNull().default(false),
 });
 
 export const accounts = pgTable(
@@ -103,6 +106,12 @@ export const packages = pgTable(
     entry: text("entry").notNull(),
     featured: boolean("featured").notNull().default(false),
     latestVersion: text("latestVersion").notNull(),
+    // Lifecycle: pending (awaiting review, owner-only) | live | unlisted (hidden from
+    // listings/search, still installable by URL) | deprecated (listed with a banner).
+    status: text("status").notNull().default("live"),
+    deprecationMessage: text("deprecationMessage"),
+    /** "owner/name" of the package that supersedes this one, when deprecated. */
+    replacementId: text("replacementId"),
     createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
     updatedAt: timestamp("updatedAt", { mode: "date" }).notNull().defaultNow(),
   },
@@ -153,6 +162,8 @@ export const purchases = pgTable(
     // ISO 4217 lowercase, as charged. Nullable only for rows written before the
     // column existed; readers fall back to the package's current currency.
     currency: text("currency"),
+    /** Stripe-hosted receipt for the charge, when the webhook could resolve one. */
+    receiptUrl: text("receiptUrl"),
     status: text("status").notNull().default("pending"), // pending | paid | failed | refunded
     createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
   },
@@ -180,6 +191,10 @@ export const packageStats = pgTable(
     name: text("name").notNull(),
     downloads: integer("downloads").notNull().default(0),
     stars: integer("stars").notNull().default(0),
+    // Derived from `reviews` (recounted on every write), never incremented.
+    ratingCount: integer("ratingCount").notNull().default(0),
+    /** Sum of all ratings; average = ratingSum / ratingCount. */
+    ratingSum: integer("ratingSum").notNull().default(0),
   },
   (t) => [primaryKey({ columns: [t.owner, t.name] })]
 );
@@ -195,4 +210,72 @@ export const stars = pgTable(
     createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
   },
   (t) => [primaryKey({ columns: [t.userId, t.owner, t.name] })]
+);
+
+// ---------------------------------------------------------------------------
+// Batch-2 tables: API tokens, install analytics, moderation, reviews.
+// ---------------------------------------------------------------------------
+
+/** Personal access tokens for the CLI and API. Only the SHA-256 hash is stored;
+ *  `prefix` (first 8 chars) is shown in the UI so a user can tell tokens apart. */
+export const apiTokens = pgTable("api_tokens", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: text("userId")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  tokenHash: text("tokenHash").notNull().unique(),
+  prefix: text("prefix").notNull(),
+  scopes: jsonb("scopes").$type<string[]>().notNull().default([]),
+  lastUsedAt: timestamp("lastUsedAt", { mode: "date" }),
+  createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
+  revokedAt: timestamp("revokedAt", { mode: "date" }),
+});
+
+/** One row per download that counted: (package, hashed client, UTC day) is unique,
+ *  so repeated installs from one machine in a day count once. Keyed by owner/name
+ *  text like package_stats so seed packages are covered too. */
+export const downloadEvents = pgTable(
+  "download_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    owner: text("owner").notNull(),
+    name: text("name").notNull(),
+    version: text("version").notNull(),
+    runtime: text("runtime"),
+    /** SHA-256 of client IP + a daily salt; never the raw address. */
+    clientHash: text("clientHash").notNull(),
+    /** YYYY-MM-DD in UTC. */
+    day: text("day").notNull(),
+    createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [unique("download_events_unique_per_day").on(t.owner, t.name, t.clientHash, t.day)]
+);
+
+export const reports = pgTable("reports", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  owner: text("owner").notNull(),
+  name: text("name").notNull(),
+  reporterUserId: text("reporterUserId").references(() => users.id, { onDelete: "set null" }),
+  reason: text("reason").notNull(), // prompt-injection | malware | license | spam | other
+  details: text("details"),
+  status: text("status").notNull().default("open"), // open | resolved | dismissed
+  createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
+});
+
+export const reviews = pgTable(
+  "reviews",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    owner: text("owner").notNull(),
+    name: text("name").notNull(),
+    rating: integer("rating").notNull(), // 1..5
+    body: text("body"),
+    createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updatedAt", { mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [unique("reviews_one_per_user_per_package").on(t.userId, t.owner, t.name)]
 );

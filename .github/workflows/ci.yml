@@ -31,6 +31,32 @@ jobs:
       - name: Catalog check (openagent.yaml validity + .meta.json presence)
         run: npm run check:catalog
 
+      # G-O4: drizzle/ is the committed source of truth for the schema (see
+      # src/content/docs/self-hosting.md#migrations). `drizzle-kit generate` is a
+      # snapshot diff against src/lib/db/schema.ts — offline, no DATABASE_URL needed
+      # — so re-running it here is a no-op ("No schema changes, nothing to migrate")
+      # when drizzle/ is in sync, and writes a new migration file when someone edited
+      # the schema and forgot to run `npm run db:generate` before committing. Note
+      # `drizzle-kit check` (a different subcommand) only validates the internal
+      # consistency of the migrations folder itself, not drift against the schema —
+      # it does NOT catch this, which is why this step uses `generate` + `git diff`
+      # instead. `drizzle/` is gitignored (existing repo convention), so `git add -f`
+      # is required before diffing or an unstaged new file wouldn't show up at all.
+      - name: Check for schema/migration drift (drizzle/)
+        run: |
+          npx drizzle-kit generate
+          git add -f drizzle
+          git diff --cached --exit-code -- drizzle || {
+            echo "::error::src/lib/db/schema.ts and drizzle/ are out of sync. Run 'npm run db:generate' locally and commit the result.";
+            exit 1;
+          }
+
+      # G-O7: every src/app/api/**/route.ts must have a matching entry in
+      # public/openapi.json (see src/content/docs/api.md#openapi and
+      # scripts/check-openapi.ts) so the spec can't silently drift from the routes.
+      - name: OpenAPI coverage check
+        run: npx tsx scripts/check-openapi.ts
+
       - name: Unit tests
         run: npm test --if-present
 

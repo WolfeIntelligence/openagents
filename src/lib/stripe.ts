@@ -32,6 +32,19 @@ export const PLATFORM_FEE_BPS = Number(process.env.PLATFORM_FEE_BPS ?? "1000");
 /** Default country (ISO 3166-1 alpha-2) used for new Connect accounts' `identity.country`. */
 export const DEFAULT_CONNECT_COUNTRY = "US";
 
+/** Platform's cut of a gross charge, in the same minor unit as `grossCents` (cents for
+ *  most currencies, whole units for zero-decimal ones — see `isZeroDecimal`). Pure
+ *  integer math so it agrees exactly with `application_fee_amount` below. */
+export function platformFeeCents(grossCents: number, feeBps: number = PLATFORM_FEE_BPS): number {
+  return Math.round((grossCents * feeBps) / 10000);
+}
+
+/** Seller's share of a gross charge after the platform fee — what the seller
+ *  dashboard and `/settings/payouts` report as "net" revenue. */
+export function netRevenueCents(grossCents: number, feeBps: number = PLATFORM_FEE_BPS): number {
+  return grossCents - platformFeeCents(grossCents, feeBps);
+}
+
 export interface CreateCheckoutSessionArgs {
   pkg: Package;
   buyerUserId: string;
@@ -75,7 +88,7 @@ export async function createCheckoutSession({
   if (!isSupportedCurrency(currency)) {
     throw new Error(`package ${pkg.id} has an unsupported currency: ${currency}`);
   }
-  const applicationFeeAmount = Math.round((amountCents * PLATFORM_FEE_BPS) / 10000);
+  const applicationFeeAmount = platformFeeCents(amountCents);
 
   const session = await stripe.checkout.sessions.create({
     mode: "payment",
@@ -215,4 +228,30 @@ export async function getConnectedAccountStatus(accountId: string): Promise<Conn
     detailsSubmitted,
     transfersActive,
   };
+}
+
+/**
+ * Returns a fresh, single-use link to the seller's Stripe Express Dashboard, for the
+ * "Open Stripe dashboard" button on `/settings/payouts`.
+ *
+ * Research (stripe npm package 22.6.1, checked under `node_modules/stripe/cjs`): there
+ * is no v2-native way to mint this link in this SDK version. `resources/V2/Core/
+ * AccountLinks.d.ts` only defines `use_case.account_onboarding` and `account_update` —
+ * no "dashboard"/"login" use case — and `resources/AccountSessions.d.ts` is the Connect
+ * *embedded components* session (a different product, for embedding Stripe UI in our
+ * own pages), not an Express Dashboard login link. The only login-link API that exists
+ * at all is the v1 one in `resources/Accounts.d.ts`:
+ * `createLoginLink(id): Promise<Response<LoginLink>>`, documented as "Creates a login
+ * link for a connected account to access the Express Dashboard" with no restriction to
+ * v1-created accounts, and Stripe's Accounts v2 migration guide
+ * (docs.stripe.com/connect/accounts-v2/account-creation) does not list it among the v1
+ * calls that stop working for v2 accounts. So it's used here for our v2
+ * `dashboard: "express"` accounts. If Stripe ships a v2-native equivalent later, swap
+ * it in here — this is the only place that needs to change.
+ */
+export async function createExpressLoginLink(accountId: string): Promise<{ url: string }> {
+  const stripe = getStripe();
+  if (!stripe) throw new Error("payments not configured");
+  const link = await stripe.accounts.createLoginLink(accountId);
+  return { url: link.url };
 }

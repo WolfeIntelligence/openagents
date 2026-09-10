@@ -15,7 +15,10 @@ export async function GET(
   if (!pkg) {
     return error(404, `package not found: ${owner}/${name}`);
   }
-  return json(pkg);
+  // S4/G-V1: lets a client show "what's current" without re-deriving it from
+  // manifest.version itself; kept alongside every existing field, not instead
+  // of them.
+  return json({ ...pkg, latestVersion: pkg.manifest.version });
 }
 
 export async function OPTIONS() {

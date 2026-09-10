@@ -59,7 +59,7 @@ requires:
 | `entry` | string | yes | The main file an agent reads first. Must appear in `files`. |
 | `files` | string[] | yes | Every shipped file, as paths relative to the package root. Must include `entry`. The registry and CLI both reject a manifest whose `files`/`entry` don't match what's actually on disk. The registry additionally caps a submission at 200 files, 512 KB per file, and 2 MB total, and rejects binary files — see [Publishing](/docs/publishing). |
 | `inputs` | object[] | no (default `[]`) | Declared runtime parameters. See **Input object** below. |
-| `requires` | string[] | no (default `[]`) | Dependencies on other packages, as `"owner/name@range"` (npm-style semver range), e.g. `openagents/base-rules@^1`. Still informational only — not auto-installed by the CLI, and not resolved by the registry. |
+| `requires` | string[] | no (default `[]`) | Dependencies on other packages, as `"owner/name@range"` (npm-style semver range), e.g. `openagents/base-rules@^1`. Resolved client-side by CLI 0.3.0's `openagents add` (transitively — a dependency's own `requires` are followed too — with cycle and version-conflict detection; `--no-deps` skips resolution entirely), fetched via [`GET /versions`](/docs/api#get-apiv1packagesownernameversions) on the registry. Still not resolved server-side — the registry itself doesn't install or validate dependency graphs at publish time. |
 | `homepage` | string (URL) | no | Optional link to a project homepage. |
 | `repository` | string (URL) | no | Optional link to the source repository. |
 

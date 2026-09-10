@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { z } from "zod";
-import { auth } from "@/lib/auth";
+import { getRequester, hasScope } from "@/lib/requester";
 import { isDbEnabled } from "@/lib/db/client";
 import { error, json, preflight } from "@/lib/api";
 import { publishPackage, PublishError } from "@/lib/publish";
@@ -24,8 +24,14 @@ export async function POST(req: NextRequest) {
     return error(503, "database not configured");
   }
 
-  const session = await auth();
-  if (!session?.user?.handle) {
+  const requester = await getRequester(req);
+  if (!requester) {
+    return error(401, "unauthorized");
+  }
+  if (!hasScope(requester, "publish")) {
+    return error(403, "insufficient scope");
+  }
+  if (!requester.handle) {
     return error(401, "unauthorized");
   }
 
@@ -40,7 +46,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const result = await publishPackage({
-      userHandle: session.user.handle,
+      userHandle: requester.handle,
       files: parsed.data.files,
       changelog: parsed.data.changelog,
     });

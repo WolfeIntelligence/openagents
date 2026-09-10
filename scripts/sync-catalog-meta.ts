@@ -40,7 +40,9 @@ function gitDates(dir: string): { createdAt: string; updatedAt: string } | null 
   const created = git(["log", "--diff-filter=A", "--format=%cI", "--reverse", "--", dir])
     .split("\n")
     .filter(Boolean)[0];
-  const updated = git(["log", "-1", "--format=%cI", "--", dir]);
+  // Exclude .meta.json itself: regenerating these files must not make every
+  // package look "updated today".
+  const updated = git(["log", "-1", "--format=%cI", "--", dir, `:(exclude)${dir}/.meta.json`]);
   if (!created || !updated) return null;
   return {
     createdAt: new Date(created).toISOString(),

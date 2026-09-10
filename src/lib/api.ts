@@ -11,7 +11,7 @@ export const CORS_HEADERS: Record<string, string> = {
   // unless it's explicitly exposed — the CLI and third-party clients need
   // these to read a tarball's filename, a rate limit's retry time, and a
   // cache-validation tag.
-  "Access-Control-Expose-Headers": "Content-Disposition, Retry-After, ETag",
+  "Access-Control-Expose-Headers": "Content-Disposition, Retry-After, ETag, X-Checksum-Sha256",
 };
 
 /** JSON success response with CORS headers applied. */

@@ -1,7 +1,17 @@
 // Run via `npm test` (node --import tsx --test) or `npx tsx --test <this file>`.
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { tokenize, escapeLike, matchesTerms, rankByQuery } from "../search";
+import {
+  tokenize,
+  escapeLike,
+  matchesTerms,
+  rankByQuery,
+  scoreDocument,
+  isWithinOneEdit,
+  buildVocabulary,
+  correctTerm,
+  buildCorrectedQuery,
+} from "../search";
 
 describe("tokenize", () => {
   test("trims, splits on whitespace, and lowercases", () => {
@@ -123,5 +133,127 @@ describe("rankByQuery", () => {
     const copy = [...items];
     rankByQuery(items, ["a-exact"]);
     assert.deepEqual(items, copy);
+  });
+});
+
+describe("scoreDocument (G-S1)", () => {
+  const doc = (over: Partial<Parameters<typeof scoreDocument>[1]> = {}) => ({
+    name: "pr-reviewer",
+    title: "Pull Request Reviewer",
+    updatedAt: "2020-01-01",
+    summary: "reviews pull requests for style and correctness",
+    tags: ["code-review", "github"],
+    owner: "openagents",
+    ...over,
+  });
+
+  test("no terms scores zero", () => {
+    assert.equal(scoreDocument([], doc()), 0);
+  });
+
+  test("an exact full-name match outscores everything else", () => {
+    const exact = scoreDocument(["pr-reviewer"], doc());
+    const substringOnly = scoreDocument(["pr-reviewer"], doc({ name: "other", title: "Other", tags: [] }));
+    assert.ok(exact > substringOnly);
+  });
+
+  test("a name-prefix match outscores a title-word match", () => {
+    const prefix = scoreDocument(["pr"], doc({ name: "pr-reviewer" }));
+    const titleWordOnly = scoreDocument(["reviewer"], doc({ name: "something-else" }));
+    assert.ok(prefix > titleWordOnly);
+  });
+
+  test("a whole-word tag match scores higher than a bare substring hit", () => {
+    const wholeWord = scoreDocument(["review"], doc({ name: "x", title: "X", tags: ["code-review"] }));
+    const substringOnly = scoreDocument(["revie"], doc({ name: "x", title: "X", tags: ["code-review"] }));
+    assert.ok(wholeWord > substringOnly);
+  });
+
+  test("scores sum across multiple matching terms", () => {
+    const oneTerm = scoreDocument(["review"], doc());
+    const twoTerms = scoreDocument(["review", "github"], doc());
+    assert.ok(twoTerms > oneTerm);
+  });
+
+  test("missing summary/tags/owner are treated as empty, not an error", () => {
+    assert.doesNotThrow(() => scoreDocument(["review"], { name: "a", title: "B", updatedAt: "2020-01-01" }));
+  });
+});
+
+describe("isWithinOneEdit", () => {
+  test("identical strings are within one edit", () => {
+    assert.equal(isWithinOneEdit("review", "review"), true);
+  });
+
+  test("a single substitution is within one edit", () => {
+    assert.equal(isWithinOneEdit("reviw", "revie"), true); // w<->e substitution, same length
+  });
+
+  test("a single insertion/deletion is within one edit", () => {
+    assert.equal(isWithinOneEdit("revie", "review"), true); // deletion of trailing "w"
+    assert.equal(isWithinOneEdit("reviewx", "review"), true); // insertion of trailing "x"
+  });
+
+  test("an adjacent transposition is within one edit", () => {
+    assert.equal(isWithinOneEdit("reveiw", "review"), true); // "ei" <-> "ie"
+  });
+
+  test("two non-adjacent substitutions are not within one edit", () => {
+    assert.equal(isWithinOneEdit("aabbcc", "aabbdd"), false); // differs at both trailing chars
+    assert.equal(isWithinOneEdit("axbxcx", "aybycy"), false); // differs in 3 places
+  });
+
+  test("lengths differing by more than one are never within one edit", () => {
+    assert.equal(isWithinOneEdit("review", "re"), false);
+  });
+});
+
+describe("buildVocabulary", () => {
+  test("splits names and tags on hyphens, lowercases, and dedupes", () => {
+    const vocab = buildVocabulary([
+      { name: "pr-reviewer", tags: ["code-review", "Review"] },
+      { name: "changelog-generator", tags: ["review"] },
+    ]);
+    assert.ok(vocab.includes("pr"));
+    assert.ok(vocab.includes("reviewer"));
+    assert.ok(vocab.includes("code"));
+    assert.ok(vocab.includes("review"));
+    assert.equal(vocab.filter((w) => w === "review").length, 1); // deduped
+  });
+});
+
+describe("correctTerm / buildCorrectedQuery (G-S1 typo tolerance)", () => {
+  const vocabulary = ["review", "reviewer", "changelog", "generator", "security"];
+
+  test("corrects a term with one edit against the vocabulary", () => {
+    assert.equal(correctTerm("reveiw", vocabulary), "review"); // transposition
+    assert.equal(correctTerm("reviey", vocabulary), "review"); // substitution
+  });
+
+  test("never corrects a term shorter than 5 characters", () => {
+    assert.equal(correctTerm("scan", ["scam", "span"]), null);
+  });
+
+  test("does not correct a term that's already in the vocabulary", () => {
+    assert.equal(correctTerm("review", vocabulary), null);
+  });
+
+  test("returns null when nothing in the vocabulary is close enough", () => {
+    assert.equal(correctTerm("xxxxxxxxxx", vocabulary), null);
+  });
+
+  test("buildCorrectedQuery only reports a change when something was actually corrected", () => {
+    const unchanged = buildCorrectedQuery(["review"], vocabulary);
+    assert.equal(unchanged.correctedQuery, null);
+    assert.deepEqual(unchanged.terms, ["review"]);
+
+    const changed = buildCorrectedQuery(["reveiw"], vocabulary);
+    assert.equal(changed.correctedQuery, "review");
+    assert.deepEqual(changed.terms, ["review"]);
+  });
+
+  test("corrects only the terms that need it, leaving the rest untouched", () => {
+    const result = buildCorrectedQuery(["changelog", "reveiw"], vocabulary);
+    assert.equal(result.correctedQuery, "changelog review");
   });
 });

@@ -23,8 +23,8 @@ export async function GET(request: NextRequest) {
     : DEFAULT_LIMIT;
 
   const catalog = await getCatalog();
-  const { items, total } = await catalog.list({ q, limit });
-  return json({ items, total });
+  const { items, total, correctedQuery } = await catalog.list({ q, limit });
+  return json(correctedQuery ? { items, total, correctedQuery } : { items, total });
 }
 
 export async function OPTIONS() {

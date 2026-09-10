@@ -5,11 +5,12 @@ import type { ReactNode } from "react";
 import { desc, eq, sql } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { getDb, isDbEnabled } from "@/lib/db/client";
-import { getConnectedAccountStatus, isStripeEnabled, PLATFORM_FEE_BPS } from "@/lib/stripe";
+import { getConnectedAccountStatus, isStripeEnabled, netRevenueCents } from "@/lib/stripe";
 import { packages, purchases, users } from "@/lib/db/schema";
 import { ConnectStripeButton } from "@/components/ConnectStripeButton";
 import { formatPrice } from "@/lib/format";
 import { PurchaseStatusBadge } from "@/components/PurchaseStatusBadge";
+import { OpenStripeDashboardButton } from "./OpenStripeDashboardButton";
 
 export const metadata: Metadata = {
   title: "Payouts",
@@ -110,19 +111,21 @@ export default async function PayoutsPage({ searchParams }: PayoutsPageProps) {
       .orderBy(desc(purchases.createdAt));
   }
 
-  const creatorShare = (10000 - PLATFORM_FEE_BPS) / 10000;
-
   // Grouped by currency rather than a single total — a seller can price different
   // packages in different currencies, and summing raw minor units across currencies
-  // would produce a meaningless number.
-  const totalsByCurrency = new Map<string, { grossCents: number; count: number }>();
+  // would produce a meaningless number. Net uses the same `netRevenueCents` helper as
+  // the seller dashboard, so the two pages never disagree about what a sale is worth.
+  const totalsByCurrency = new Map<string, { grossCents: number; netCents: number; count: number }>();
   for (const sale of sales) {
     if (EXCLUDED_FROM_TOTALS.has(sale.status)) continue;
-    const totals = totalsByCurrency.get(sale.currency) ?? { grossCents: 0, count: 0 };
+    const totals = totalsByCurrency.get(sale.currency) ?? { grossCents: 0, netCents: 0, count: 0 };
     totals.grossCents += sale.amountCents;
+    totals.netCents += netRevenueCents(sale.amountCents);
     totals.count += 1;
     totalsByCurrency.set(sale.currency, totals);
   }
+
+  const refundsCount = sales.filter((s) => s.status === "refunded").length;
 
   return (
     <PageShell>
@@ -187,15 +190,28 @@ export default async function PayoutsPage({ searchParams }: PayoutsPageProps) {
                 <p key={currency}>
                   Total: <span className="font-mono text-fg">{formatPrice(totals.grossCents, currency)}</span>{" "}
                   gross,{" "}
-                  <span className="font-mono text-fg">
-                    {formatPrice(Math.round(totals.grossCents * creatorShare), currency)}
-                  </span>{" "}
+                  <span className="font-mono text-fg">{formatPrice(totals.netCents, currency)}</span>{" "}
                   net across {totals.count.toLocaleString()} sale(s).
                 </p>
               ))}
+              {refundsCount > 0 && (
+                <p>
+                  <span className="font-mono text-fg">{refundsCount.toLocaleString()}</span> refund
+                  {refundsCount === 1 ? "" : "s"} (excluded from the totals above).
+                </p>
+              )}
             </div>
           </>
         )}
+      </div>
+
+      <div className="mt-10 border-t border-border pt-6">
+        <Link href="/dashboard" className="text-sm font-medium text-accent hover:text-accent-hover">
+          Open the seller dashboard →
+        </Link>
+        <p className="mt-1 text-xs text-fg-subtle">
+          Downloads, stars, ratings, and per-version/runtime breakdowns for every package you own.
+        </p>
       </div>
     </PageShell>
   );
@@ -271,17 +287,12 @@ function Onboarded({ accountId }: { accountId: string }) {
         </div>
       </dl>
       <p className="mt-3 max-w-xl text-sm text-fg-muted">
-        Payout timing, bank details, and tax forms are managed in your{" "}
-        <a
-          href="https://dashboard.stripe.com/express"
-          target="_blank"
-          rel="noreferrer noopener"
-          className="text-accent hover:text-accent-hover"
-        >
-          Stripe Express dashboard
-        </a>
-        , not here.
+        Payout timing, bank details, and tax forms are managed in your Stripe Express
+        dashboard, not here.
       </p>
+      <div className="mt-4">
+        <OpenStripeDashboardButton />
+      </div>
     </div>
   );
 }
