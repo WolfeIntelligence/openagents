@@ -17,6 +17,8 @@ Usage:
   openagents info <owner/name[@version]> [--registry <url>] [--json]
   openagents list [--dir <path>] [--json]
   openagents remove <owner/name> [--dir <path>] [--runtime <id>]
+  openagents outdated [--dir <path>] [--json] [--registry <url>]
+  openagents update [owner/name...] [--dir <path>] [--latest] [--registry <url>]
   openagents init [--kind <workflow|harness|rules|skill>] [--name <name>] [--dir <path>]
                   [--owner <owner>] [--title <title>] [--summary <text>]
                   [--tags <a,b,c>] [--runtimes <a,b,c>] [--license <spdx>]
@@ -48,6 +50,9 @@ Examples:
   openagents info openagents/pr-reviewer
   openagents list
   openagents remove openagents/pr-reviewer
+  openagents outdated
+  openagents update
+  openagents update openagents/pr-reviewer --latest
   openagents init --kind workflow --name my-workflow
   openagents validate ./catalog/openagents/pr-reviewer
   openagents login
@@ -61,6 +66,8 @@ const KNOWN_OPTIONS = {
   info: ["registry", "json"],
   list: ["dir", "json"],
   remove: ["dir", "runtime"],
+  outdated: ["dir", "json", "registry"],
+  update: ["dir", "latest", "registry"],
   init: [
     "kind",
     "name",
@@ -217,6 +224,16 @@ async function main() {
     }
     case "remove": {
       const { run } = await import("../lib/commands/remove.js");
+      await run(args);
+      break;
+    }
+    case "outdated": {
+      const { run } = await import("../lib/commands/outdated.js");
+      await run(args);
+      break;
+    }
+    case "update": {
+      const { run } = await import("../lib/commands/update.js");
       await run(args);
       break;
     }
