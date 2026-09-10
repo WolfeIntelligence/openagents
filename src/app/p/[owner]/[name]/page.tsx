@@ -16,6 +16,13 @@ import { StarButton } from "@/components/StarButton";
 import { isStarred } from "@/lib/stats";
 import { isDbEnabled } from "@/lib/db/client";
 import { formatPrice } from "@/lib/format";
+import { getRequester } from "@/lib/requester";
+import { isAdmin } from "@/lib/admin";
+import { packageHasPurchases } from "@/lib/moderation";
+import { StatusBadge } from "@/components/StatusBadge";
+import { DeprecationBanner } from "@/components/DeprecationBanner";
+import { OwnerActions } from "@/components/OwnerActions";
+import { ReportButton } from "@/components/ReportButton";
 
 type Params = { owner: string; name: string };
 type TabId = "readme" | "files" | "manifest" | "versions";
@@ -58,6 +65,18 @@ export default async function PackagePage({
   const pkg = await loadPackage(owner, name);
   if (!pkg) notFound();
 
+  // Visibility gate (G-M2): pending/unlisted packages render only for their
+  // owner or an admin; everyone else gets the same 404 as a nonexistent
+  // package. `requester`/`viewerIsAdmin`/`viewerIsOwner` are computed once
+  // here and reused below to drive the owner action panel.
+  const requester = await getRequester();
+  const viewerIsAdmin = await isAdmin(requester);
+  const viewerIsOwner = Boolean(requester?.handle && requester.handle === pkg.owner);
+  if ((pkg.status === "pending" || pkg.status === "unlisted") && !viewerIsOwner && !viewerIsAdmin) {
+    notFound();
+  }
+  const hasPurchases = await packageHasPurchases(pkg.owner, pkg.name);
+
   const catalog = await getCatalog();
   const creator = await catalog.creator(owner);
 
@@ -91,6 +110,8 @@ export default async function PackagePage({
           <h1 className="text-2xl font-semibold text-fg">{manifest.title}</h1>
           <KindBadge kind={manifest.kind} />
           <PricingBadge pricing={manifest.pricing} />
+          <StatusBadge status={pkg.status} />
+          <ReportButton owner={owner} name={name} />
         </div>
         <p className="mt-2 max-w-2xl text-sm text-fg-muted">{manifest.summary}</p>
         <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-fg-subtle">
@@ -107,6 +128,29 @@ export default async function PackagePage({
             </>
           )}
         </div>
+        {pkg.status === "deprecated" && (
+          <div className="mt-4">
+            <DeprecationBanner
+              message={pkg.deprecation?.message}
+              replacementId={pkg.deprecation?.replacementId}
+            />
+          </div>
+        )}
+        {(viewerIsOwner || viewerIsAdmin) && (
+          <div className="mt-4">
+            <OwnerActions
+              owner={owner}
+              name={name}
+              status={pkg.status}
+              featured={pkg.featured}
+              deprecationMessage={pkg.deprecation?.message}
+              replacementId={pkg.deprecation?.replacementId}
+              viewerIsOwner={viewerIsOwner}
+              viewerIsAdmin={viewerIsAdmin}
+              hasPurchases={hasPurchases}
+            />
+          </div>
+        )}
       </div>
 
       <div className="mt-6 flex flex-col gap-8 lg:flex-row">
