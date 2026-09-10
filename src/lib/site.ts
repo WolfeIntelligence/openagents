@@ -36,6 +36,18 @@ export function siteUrl(): string {
   return "http://localhost:3000";
 }
 
+/**
+ * What `npx` should run to get the CLI. Once `openagents` is published to npm, set
+ * NEXT_PUBLIC_CLI_PACKAGE=openagents and every install snippet becomes
+ * `npx openagents ...`; until then the site serves its own tarball (built by
+ * scripts/pack-cli.mjs), which npx installs directly from the URL.
+ */
+export function cliSpec(): string {
+  const explicit = process.env.NEXT_PUBLIC_CLI_PACKAGE?.trim();
+  if (explicit) return explicit;
+  return `${siteUrl()}/cli/openagents.tgz`;
+}
+
 /** Joins `path` onto `siteUrl()`, normalizing the slash between them. */
 export function absoluteUrl(path: string = "/"): string {
   const base = siteUrl();

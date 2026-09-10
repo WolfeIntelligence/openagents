@@ -27,6 +27,7 @@ import { ReviewsTab } from "@/components/ReviewsTab";
 import { RatingStars } from "@/components/RatingStars";
 import { StatsPanel } from "@/components/StatsPanel";
 import { RelatedPackages } from "@/components/RelatedPackages";
+import { cliSpec } from "@/lib/site";
 
 type Params = { owner: string; name: string };
 type TabId = "readme" | "files" | "manifest" | "versions" | "reviews";
@@ -175,7 +176,7 @@ export default async function PackagePage({
                 Checkout was cancelled — no charge was made.
               </div>
             )}
-            <InstallBox owner={owner} name={name} runtimes={manifest.runtimes} />
+            <InstallBox owner={owner} name={name} runtimes={manifest.runtimes} cli={cliSpec()} />
             <div className="flex flex-wrap items-center gap-3">
               <StarButton
                 owner={owner}
@@ -246,6 +247,7 @@ export default async function PackagePage({
                 canDownload={owns}
                 canReadEntry={access.canReadFile(manifest.entry)}
                 versions={pkg.versions}
+                cli={cliSpec()}
               />
             )}
             {activeTab === "reviews" && (
@@ -600,9 +602,12 @@ function VersionsTab({
   canDownload,
   canReadEntry,
   versions,
+  cli,
 }: {
   owner: string;
   name: string;
+  /** npx spec for the CLI (see `cliSpec()`). */
+  cli: string;
   /** `manifest.entry` — used for the per-version "Files" link (S4/G-V1). */
   entry: string;
   /** Whether the viewer may fetch a tarball at all (paywall gate). */
@@ -648,7 +653,7 @@ function VersionsTab({
             )}
           </div>
           <p className="mt-2 rounded-md bg-surface-hover px-2 py-1 font-mono text-xs text-fg-muted">
-            npx openagents add {owner}/{name}@{v.version}
+            npx {cli} add {owner}/{name}@{v.version}
           </p>
         </li>
       ))}

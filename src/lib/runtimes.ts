@@ -90,8 +90,15 @@ export const KIND_META: Record<PackageKind, KindMeta> = {
 // Re-exported for convenience so callers only need `import from "@/lib/runtimes"`.
 export { RUNTIME_IDS, PACKAGE_KINDS };
 
-/** Builds the `npx openagents add ...` install command shown in the UI / docs. */
-export function installCommand(owner: string, name: string, runtime?: RuntimeId): string {
-  const base = `npx openagents add ${owner}/${name}`;
+/** Builds the `npx <cli> add ...` install command shown in the UI / docs. `cli` is the
+ *  package spec npx runs — `cliSpec()` from src/lib/site.ts on the server (the site's own
+ *  tarball until the npm package exists); client components receive it as a prop. */
+export function installCommand(
+  owner: string,
+  name: string,
+  runtime?: RuntimeId,
+  cli: string = "openagents"
+): string {
+  const base = `npx ${cli} add ${owner}/${name}`;
   return runtime ? `${base} --runtime ${runtime}` : base;
 }

@@ -10,6 +10,7 @@ import { formatPrice } from "@/lib/format";
 import { PurchaseStatusBadge } from "@/components/PurchaseStatusBadge";
 import { CopyButton } from "@/components/CopyButton";
 import { installCommand } from "@/lib/runtimes";
+import { cliSpec } from "@/lib/site";
 
 export const metadata: Metadata = {
   title: "Purchases",
@@ -106,7 +107,7 @@ async function PurchasesTable({
         </thead>
         <tbody>
           {rows.map((row, i) => {
-            const reinstall = installCommand(row.owner, row.name);
+            const reinstall = installCommand(row.owner, row.name, undefined, cliSpec());
             return (
               <tr key={i} className="border-b border-border last:border-0">
                 <td className="px-4 py-2">
