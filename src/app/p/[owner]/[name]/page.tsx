@@ -182,7 +182,7 @@ export default async function PackagePage({
           </div>
 
           <div className="py-6">
-            {activeTab === "readme" && <ReadmeTab readme={pkg.readme} />}
+            {activeTab === "readme" && <ReadmeTab owner={owner} name={name} readme={pkg.readme} />}
             {activeTab === "files" && (
               <FilesTab owner={owner} name={name} files={pkg.files} canReadFile={access.canReadFile} />
             )}
@@ -276,11 +276,12 @@ function SidebarSection({ title, children }: { title: string; children: ReactNod
   );
 }
 
-function ReadmeTab({ readme }: { readme: string }) {
+function ReadmeTab({ owner, name, readme }: { owner: string; name: string; readme: string }) {
   if (!readme.trim()) {
     return <p className="text-sm text-fg-muted">This package has no README.</p>;
   }
-  return <Markdown content={readme} />;
+  // owner/name let relative README links and images resolve to the package files.
+  return <Markdown content={readme} owner={owner} name={name} />;
 }
 
 async function FilesTab({
