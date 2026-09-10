@@ -75,6 +75,9 @@ export interface Package {
   stats: {
     downloads: number;
     stars: number;
+    /** Mean review rating (1..5); absent until the package has a review. */
+    ratingAverage?: number;
+    ratingCount?: number;
   };
   featured: boolean;
   status: PackageStatus;

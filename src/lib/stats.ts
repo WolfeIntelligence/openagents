@@ -21,6 +21,9 @@ import { packageStats, stars } from "@/lib/db/schema";
 export interface Stats {
   downloads: number;
   stars: number;
+  /** Mean review rating 1..5, absent when nobody has reviewed. */
+  ratingAverage?: number;
+  ratingCount?: number;
 }
 
 export interface PackageRef {
@@ -61,7 +64,12 @@ export async function getStats(refs: PackageRef[]): Promise<Map<string, Stats>> 
     for (const row of rows) {
       const key = statsKey(row.owner, row.name);
       if (!wanted.has(key)) continue;
-      out.set(key, { downloads: row.downloads, stars: row.stars });
+      out.set(key, {
+        downloads: row.downloads,
+        stars: row.stars,
+        ratingCount: row.ratingCount || undefined,
+        ratingAverage: row.ratingCount ? row.ratingSum / row.ratingCount : undefined,
+      });
     }
   } catch {
     // Database unreachable — report no counts rather than failing the page.

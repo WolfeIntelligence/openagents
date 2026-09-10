@@ -191,6 +191,10 @@ export const packageStats = pgTable(
     name: text("name").notNull(),
     downloads: integer("downloads").notNull().default(0),
     stars: integer("stars").notNull().default(0),
+    // Derived from `reviews` (recounted on every write), never incremented.
+    ratingCount: integer("ratingCount").notNull().default(0),
+    /** Sum of all ratings; average = ratingSum / ratingCount. */
+    ratingSum: integer("ratingSum").notNull().default(0),
   },
   (t) => [primaryKey({ columns: [t.owner, t.name] })]
 );
