@@ -20,6 +20,8 @@ export interface Pricing {
   model: PricingModel;
   amountCents: number; // 0 when free
   currency: string; // ISO 4217 lowercase, e.g. "usd"
+  /** Billing period, only for `subscription` (default "month"). */
+  interval?: "month" | "year";
 }
 
 export interface PackageInput {

@@ -37,6 +37,9 @@ export const users = pgTable("user", {
   bio: text("bio"),
   stripeAccountId: text("stripeAccountId"),
   stripeOnboarded: boolean("stripeOnboarded").notNull().default(false),
+  /** Stripe Customer used for the buyer side (subscriptions, billing portal). */
+  stripeCustomerId: text("stripeCustomerId"),
+  createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
   website: text("website"),
   // Moderation role. Granted by hand (or via ADMIN_HANDLES env) — there is no UI to grant it.
   isAdmin: boolean("isAdmin").notNull().default(false),
@@ -144,6 +147,10 @@ export const packageFiles = pgTable("package_files", {
   path: text("path").notNull(),
   size: integer("size").notNull(),
   content: text("content").notNull(),
+  /** "utf8" for text (content is the text) or "base64" for binary (content is base64). */
+  encoding: text("encoding").notNull().default("utf8"),
+  /** POSIX file mode (e.g. 0o755 for executable scripts); null = default 0o644. */
+  mode: integer("mode"),
 });
 
 export const purchases = pgTable(
@@ -164,6 +171,10 @@ export const purchases = pgTable(
     currency: text("currency"),
     /** Stripe-hosted receipt for the charge, when the webhook could resolve one. */
     receiptUrl: text("receiptUrl"),
+    /** Subscription purchases: the Stripe Subscription and when paid-through access ends
+     *  (null = perpetual one-time purchase). */
+    stripeSubscriptionId: text("stripeSubscriptionId"),
+    expiresAt: timestamp("expiresAt", { mode: "date" }),
     status: text("status").notNull().default("pending"), // pending | paid | failed | refunded
     createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
   },
@@ -278,4 +289,74 @@ export const reviews = pgTable(
     updatedAt: timestamp("updatedAt", { mode: "date" }).notNull().defaultNow(),
   },
   (t) => [unique("reviews_one_per_user_per_package").on(t.userId, t.owner, t.name)]
+);
+
+// ---------------------------------------------------------------------------
+// Batch-3 tables: durable rate limits, collections, GitHub package sources.
+// ---------------------------------------------------------------------------
+
+/** Fixed-window counters shared by every serverless instance. `key` is
+ *  "<route>:<client>" and `windowStart` the start of the current window. */
+export const rateLimits = pgTable("rate_limits", {
+  key: text("key").primaryKey(),
+  count: integer("count").notNull().default(0),
+  windowStart: timestamp("windowStart", { mode: "date" }).notNull().defaultNow(),
+});
+
+export const collections = pgTable(
+  "collections",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    ownerUserId: text("ownerUserId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** Owner's handle at creation time; used in the URL /c/<handle>/<slug>. */
+    ownerHandle: text("ownerHandle").notNull(),
+    slug: text("slug").notNull(),
+    title: text("title").notNull(),
+    description: text("description"),
+    isPublic: boolean("isPublic").notNull().default(true),
+    featured: boolean("featured").notNull().default(false),
+    createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updatedAt", { mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [unique("collections_owner_slug_unique").on(t.ownerHandle, t.slug)]
+);
+
+export const collectionItems = pgTable(
+  "collection_items",
+  {
+    collectionId: uuid("collectionId")
+      .notNull()
+      .references(() => collections.id, { onDelete: "cascade" }),
+    owner: text("owner").notNull(),
+    name: text("name").notNull(),
+    position: integer("position").notNull().default(0),
+    note: text("note"),
+    addedAt: timestamp("addedAt", { mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.collectionId, t.owner, t.name] })]
+);
+
+/** A package linked to a GitHub repository for automatic republishing. The seller
+ *  pastes `<site>/api/webhooks/github/<id>` plus the secret into the repo's webhook
+ *  settings; a release/tag push re-imports `subdir` at that ref. */
+export const packageSources = pgTable(
+  "package_sources",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    owner: text("owner").notNull(),
+    name: text("name").notNull(),
+    userId: text("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    repo: text("repo").notNull(), // "github-owner/repo"
+    ref: text("ref"), // branch or tag pattern; null = the pushed tag / default branch
+    subdir: text("subdir"),
+    secretHash: text("secretHash").notNull(),
+    lastSyncedAt: timestamp("lastSyncedAt", { mode: "date" }),
+    lastResult: text("lastResult"),
+    createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [unique("package_sources_package_unique").on(t.owner, t.name)]
 );
