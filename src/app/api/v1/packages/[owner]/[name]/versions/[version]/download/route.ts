@@ -92,6 +92,10 @@ export async function GET(
   const { owner, name, version } = await params;
   const loaded = await loadAccess(owner, name, version);
   if (!loaded.found) return error(404, `version not found: ${owner}/${name}@${version}`);
+  // Pending packages are visible only to their owner until an admin approves them.
+  if (loaded.pkg.status === "pending" && !loaded.access.isOwner) {
+    return error(404, `package not found: ${owner}/${name}`);
+  }
   const { pkg, access } = loaded;
 
   if (!access.canDownload) {
@@ -136,6 +140,9 @@ export async function HEAD(
   const { owner, name, version } = await params;
   const loaded = await loadAccess(owner, name, version);
   if (!loaded.found) return withCors(new Response(null, { status: 404 }));
+  if (loaded.pkg.status === "pending" && !loaded.access.isOwner) {
+    return withCors(new Response(null, { status: 404 }));
+  }
   const { pkg, access } = loaded;
 
   if (!access.canDownload) {
