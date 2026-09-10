@@ -1,12 +1,9 @@
 import type { Pricing } from "@/lib/types";
+import { formatPrice } from "@/lib/format";
 
-function formatPrice(pricing: Pricing): string {
+function formatPricingLabel(pricing: Pricing): string {
   if (pricing.model === "free" || pricing.amountCents === 0) return "Free";
-  const amount = (pricing.amountCents / 100).toLocaleString(undefined, {
-    style: "currency",
-    currency: pricing.currency.toUpperCase(),
-    minimumFractionDigits: pricing.amountCents % 100 === 0 ? 0 : 2,
-  });
+  const amount = formatPrice(pricing.amountCents, pricing.currency);
   return pricing.model === "subscription" ? `${amount}/mo` : amount;
 }
 
@@ -26,7 +23,7 @@ export function PricingBadge({
           : "border-accent-border bg-accent-muted text-accent"
       } ${className}`}
     >
-      {formatPrice(pricing)}
+      {formatPricingLabel(pricing)}
     </span>
   );
 }

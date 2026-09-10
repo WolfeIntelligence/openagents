@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 
+const GENERIC_ERROR = "Something went wrong starting checkout. Try again.";
+
 export function BuyButton({
   owner,
   name,
@@ -16,6 +18,7 @@ export function BuyButton({
   const [status, setStatus] = useState<"idle" | "loading" | "unconfigured" | "unauthorized" | "error">(
     "idle",
   );
+  const [errorMessage, setErrorMessage] = useState<string>(GENERIC_ERROR);
 
   async function handleClick() {
     setStatus("loading");
@@ -34,6 +37,12 @@ export function BuyButton({
         return;
       }
       if (!res.ok) {
+        const data: unknown = await res.json().catch(() => null);
+        const serverError =
+          data && typeof data === "object" && typeof (data as { error?: unknown }).error === "string"
+            ? (data as { error: string }).error
+            : GENERIC_ERROR;
+        setErrorMessage(serverError);
         setStatus("error");
         return;
       }
@@ -45,9 +54,11 @@ export function BuyButton({
       if (url) {
         window.location.href = url;
       } else {
+        setErrorMessage(GENERIC_ERROR);
         setStatus("error");
       }
     } catch {
+      setErrorMessage(GENERIC_ERROR);
       setStatus("error");
     }
   }
@@ -70,11 +81,7 @@ export function BuyButton({
       {status === "unauthorized" && (
         <p className="text-xs text-fg-subtle">Sign in to buy this package.</p>
       )}
-      {status === "error" && (
-        <p className="text-xs text-danger">
-          Something went wrong starting checkout. Try again.
-        </p>
-      )}
+      {status === "error" && <p className="text-xs text-danger">{errorMessage}</p>}
     </div>
   );
 }
