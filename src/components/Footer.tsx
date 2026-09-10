@@ -32,6 +32,12 @@ export function Footer() {
           >
             GitHub
           </a>
+          <Link href="/privacy" className="text-fg-muted hover:text-fg">
+            Privacy
+          </Link>
+          <Link href="/terms" className="text-fg-muted hover:text-fg">
+            Terms
+          </Link>
           <span className="text-fg-subtle">MIT License</span>
         </nav>
       </div>
