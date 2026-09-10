@@ -5,11 +5,17 @@ import { UserMenu, handleSignOut } from "@/components/UserMenu";
 import { NavLinks } from "@/components/NavLinks";
 import { MobileNav } from "@/components/MobileNav";
 import { auth, isAuthEnabled } from "@/lib/auth";
+import { isAdmin } from "@/lib/admin";
 
 export async function Header() {
   const authEnabled = isAuthEnabled();
   const session = authEnabled ? await auth() : null;
   const handle = session?.user?.handle;
+  // The admin link is the only nav item that depends on a role; resolve it once here so
+  // the (client) menu stays a dumb renderer.
+  const admin = session?.user?.id
+    ? await isAdmin({ id: session.user.id, handle, via: "session", scopes: [] })
+    : false;
 
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-bg/85 backdrop-blur supports-[backdrop-filter]:bg-bg/70">
@@ -41,6 +47,7 @@ export async function Header() {
               name={session.user.name}
               image={session.user.image}
               handle={handle}
+              isAdmin={admin}
             />
           ) : (
             <Link
