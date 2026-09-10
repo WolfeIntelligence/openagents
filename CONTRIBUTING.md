@@ -89,9 +89,25 @@ welcome without prior discussion.
 - The app must always build and run with zero environment variables set (seed catalog
   only) — don't add a code path that crashes when `DATABASE_URL`/auth/Stripe env vars
   are absent.
+- **Changed `src/lib/db/schema.ts`? Run `npm run db:generate` and commit the result
+  under `drizzle/`.** That directory is the versioned migration history (see
+  [Self-Hosting](./src/content/docs/self-hosting.md#schema-migrations)); CI fails the
+  build if the schema and `drizzle/` have drifted (it re-runs `db:generate` and checks
+  nothing changed). `drizzle/` is `.gitignore`d by default in this repo, so add it
+  explicitly (`git add -f drizzle/...`) the first time you generate a new migration
+  file.
+- Added or changed a route under `src/app/api/**`? Add or update the matching entry
+  in [`public/openapi.json`](./public/openapi.json) in the same PR —
+  `npx tsx scripts/check-openapi.ts` (also run in CI) fails if a route exists with no
+  corresponding OpenAPI path.
 
 ## Reporting issues
 
-Use GitHub Issues for bugs and feature requests. For a bad or misleading package in
-the catalog, flag it in an issue with the package's `owner/name` and what's wrong —
-maintainers can pull a package from the catalog independently of a code change.
+Use GitHub Issues for bugs and feature requests. For a bad, unsafe, or misleading
+**database-backed** package (one published through `/publish`/the API, not the
+`catalog/` directory), use in-app reporting instead —
+`POST /api/v1/packages/{owner}/{name}/report` (no sign-in required), or the "Report"
+action on the package's page — which lands it in the admin moderation queue directly.
+For a seed package under `catalog/`, flag it in a GitHub issue with the package's
+`owner/name` and what's wrong; maintainers can pull it from the catalog independently
+of a code change.

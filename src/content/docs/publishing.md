@@ -49,10 +49,58 @@ payment.
 2. Connect a payout account via **Stripe Connect** — required before a paid package
    can go live, since checkout needs somewhere to send the creator's share of each
    sale.
-3. Submit the files (and an optional changelog) through the `/publish` form, or
-   programmatically via `POST /api/v1/publish` (see [API Reference](/docs/api)).
-4. Once validation passes, the package is live immediately — purchasable via Stripe
-   Checkout right away. There's no pre-publish review queue.
+3. Submit the files (and an optional changelog) through the `/publish` form,
+   programmatically via `POST /api/v1/publish` (see [API Reference](/docs/api)), from
+   a public GitHub repo via [`POST /api/v1/publish/import`](#publish-from-github), or
+   with `openagents publish` (see [CLI Reference](/docs/cli)) once you've
+   `openagents login`'d.
+4. Once validation passes, a **brand-new** package goes live immediately and is
+   purchasable via Stripe Checkout right away — unless this deployment has
+   `REQUIRE_REVIEW=1` set, in which case it's created as `pending` first (see below).
+   Publishing a new **version** of an already-live package is always immediate,
+   regardless of `REQUIRE_REVIEW`.
+
+### Review mode (`REQUIRE_REVIEW=1`)
+
+When the deployment operator sets `REQUIRE_REVIEW=1`, every brand-new package (not a
+new version of an existing one) is created with `status: "pending"` instead of
+`"live"`:
+
+- A pending package is visible only to its owner and to admins — `GET
+  /api/v1/packages/{owner}/{name}` 404s for anyone else, exactly as if the package
+  didn't exist. It doesn't appear in `/explore`, search, or `/u/{owner}`.
+- The publish response (`POST /api/v1/publish` / `.../publish/import`) reflects this:
+  `{ ..., status: "pending" }` instead of `"live"`.
+- An admin reviews it from `/admin`'s pending queue and approves or rejects it
+  (`POST /api/v1/admin/packages/{owner}/{name}`). Approval flips it to `live`;
+  rejection is a hard rejection — the owner is expected to fix and resubmit as a
+  new version, or as a new package if the original was abandoned.
+- Admins are any user with `users.isAdmin` set, or any handle listed in the
+  `ADMIN_HANDLES` env var — see [Self-Hosting](/docs/self-hosting).
+
+Most self-hosted instances (and `openagents-nu.vercel.app`) run without this set —
+packages publish straight to `live`, exactly as described in step 4 above, and
+moderation happens after the fact via [reports](#reporting-issues) instead of before
+publish.
+
+### Publish from GitHub
+
+`POST /api/v1/publish/import` (and `openagents publish --from-github <url>`) publishes
+directly from a public GitHub repository — no local checkout needed:
+
+```bash
+curl -X POST "https://openagents-nu.vercel.app/api/v1/publish/import" \
+  -H "Authorization: Bearer oa_..." -H "Content-Type: application/json" \
+  -d '{"repo": "github.com/me/my-package/tree/main/packages/reviewer"}'
+```
+
+`repo` accepts `github.com/{owner}/{repo}`, optionally with `/tree/{ref}/{subdir}` for
+a non-default branch and/or a package that lives in a subdirectory of the repo (a
+monorepo of packages, say). It fetches `openagent.yaml`, `README.md`, and every file
+the manifest lists from that path, then runs through the exact same validation, file
+limits, and `REQUIRE_REVIEW` behavior as submitting the files directly. Only public
+repositories are supported. See [API Reference](/docs/api#post-apiv1publishimport)
+for the full request/response shape.
 
 ### Platform fee
 
@@ -63,10 +111,10 @@ Stripe account. The fee is disclosed on the checkout page before purchase.
 
 ### Content policy
 
-Packages go live as soon as they pass validation — there's no human review gate before
-publishing. Maintainers do enforce the following after the fact, and will unlist (or,
-for repeat/severe violations, take down and suspend the account behind) any package
-that breaks them:
+By default (no `REQUIRE_REVIEW`), packages go live as soon as they pass validation —
+there's no human review gate before publishing. Maintainers do enforce the following
+after the fact, and will unlist (or, for repeat/severe violations, take down and
+suspend the account behind) any package that breaks them:
 
 - **Functional content** — the package must do what its summary/README claim; stub or
   placeholder content gets unlisted.
@@ -80,8 +128,51 @@ that breaks them:
 - **Pricing transparency** — summary/README must not misrepresent what's free vs. what
   requires the paid tier, for packages that bundle both.
 
-If you believe a published package violates this policy, see "Reporting issues" in
-`CONTRIBUTING.md`.
+If you believe a published package violates this policy, report it —
+`POST /api/v1/packages/{owner}/{name}/report` (no sign-in required — see
+[API Reference](/docs/api#post-apiv1packagesownernamereport)) or the "Report" action on
+the package's page — and see "Reporting issues" in `CONTRIBUTING.md` for the GitHub
+Issues path too. Reports land in the admin queue (`/admin`) alongside anything pending
+review.
+
+## Package lifecycle
+
+A package's `status` is one of:
+
+| Status | Listed / searchable | Installable by URL | Notes |
+|---|---|---|---|
+| `pending` | No | Owner/admin only | Only reachable with `REQUIRE_REVIEW=1`; see above. |
+| `live` | Yes | Yes | The normal state. |
+| `unlisted` | No | Yes | Fully functional, just hidden from `/explore`, search, and the owner's public profile listing. Good for "shared by direct link only," or for quietly retiring something without breaking existing installs. |
+| `deprecated` | Yes | Yes | Listed normally, but the package page shows a deprecation banner and `openagents add`/`update` print a warning at install/update time. |
+
+The owner (or an admin) changes status with
+`POST /api/v1/packages/{owner}/{name}/status`:
+
+```bash
+# Unlist
+curl -X POST ".../api/v1/packages/me/my-package/status" \
+  -H "Authorization: Bearer oa_..." -H "Content-Type: application/json" \
+  -d '{"status": "unlisted"}'
+
+# Deprecate, pointing at a replacement
+curl -X POST ".../api/v1/packages/me/my-package/status" \
+  -H "Authorization: Bearer oa_..." -H "Content-Type: application/json" \
+  -d '{"status": "deprecated", "message": "Superseded by the v2 rewrite.", "replacementId": "me/my-package-v2"}'
+
+# Delete permanently (only when the package has zero purchases ever)
+curl -X POST ".../api/v1/packages/me/my-package/status" \
+  -H "Authorization: Bearer oa_..." -H "Content-Type: application/json" \
+  -d '{"action": "delete"}'
+```
+
+Deleting is permanent and rejected (`409 Conflict`) the moment a package has any
+purchase history at all — once someone's paid for it, `unlisted` or `deprecated` is
+the only way to retire it, so buyers keep access to what they bought. Seed packages
+(anything under `catalog/`, not database-backed) can't be changed or deleted through
+this route at all (`400 Bad Request`) — they're retired by removing them from the
+repository instead. Full request/response reference:
+[API Reference](/docs/api#post-apiv1packagesownernamestatus).
 
 ## Updating a published package
 

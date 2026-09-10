@@ -40,8 +40,41 @@ cp .env.example .env.local
 
 When set, the catalog abstraction (`src/lib/catalog/index.ts`) merges DB-backed
 packages with the bundled seed catalog; when unset, only the seed catalog is served.
-Run migrations with Drizzle (`drizzle.config.ts` at the repo root) before the first
-deploy with a database attached.
+
+#### Schema migrations
+
+The schema (`src/lib/db/schema.ts`) is versioned as Drizzle SQL migrations checked
+into `drizzle/` — commit that directory, don't `.gitignore` it away in a fork.
+
+| Command | When |
+|---|---|
+| `npm run db:generate` | After every schema edit. Diffs `src/lib/db/schema.ts` against the last migration snapshot and writes a new file under `drizzle/` (or nothing, if there's no drift). Runs entirely offline — no `DATABASE_URL` needed. |
+| `npm run db:migrate` | Applies any not-yet-applied migrations in `drizzle/` to `DATABASE_URL`. *(Not present in `package.json` today — see the note below.)* |
+| `npm run db:push` | Pushes the current schema straight to `DATABASE_URL`, skipping the migrations folder entirely. |
+| `npm run db:studio` | Opens Drizzle Studio against `DATABASE_URL` to browse data. |
+
+**The hosted deploy still uses `db:push` today**, not a `db:generate`/`db:migrate`
+pipeline — `drizzle/` exists so migrations *can* be reviewed and applied
+deliberately, but nothing currently runs `db:migrate` in CI or at deploy time. To
+switch a deployment over:
+
+1. Make sure `drizzle/` is up to date: `npm run db:generate` should print
+   "No schema changes, nothing to migrate" against the schema you're running (CI
+   checks this on every push — see `.github/workflows/ci.yml`).
+2. Add a `db:migrate` script that runs Drizzle's migrator against `DATABASE_URL`
+   (`drizzle-orm/neon-http/migrator`'s `migrate()`, pointed at `./drizzle`) — see
+   Drizzle's [migrations guide](https://orm.drizzle.team/docs/migrations) for the
+   Neon HTTP driver specifically, since this project's `getDb()` uses
+   `@neondatabase/serverless` over HTTP, not a pooled TCP connection.
+3. Run that script as a release step (a Vercel deploy hook, or manually) instead of
+   `db:push` going forward. Until then, `db:push` remains correct to run after
+   pulling schema changes — it's just not reviewable/rollback-able the way applying
+   `drizzle/*.sql` one file at a time is.
+
+The very first migration (`drizzle/0000_*.sql`) was generated from the schema as of
+this doc's writing and covers every table that exists today; a fresh database can
+either run it via `db:migrate` (once wired up) or just use `db:push`, which produces
+the same end state.
 
 ### Auth.js (GitHub and/or Google OAuth) — enables sign-in, publishing, stars
 
@@ -101,6 +134,54 @@ connected through `/api/connect/onboard` from the hosted `/publish` flow or
 `/settings/payouts`; see [Publishing](/docs/publishing) for the fee/content-policy
 details.
 
+### Moderation and review
+
+| Variable | Description |
+|---|---|
+| `ADMIN_HANDLES` | Comma-separated handles granted admin access (`/admin`, `GET /api/v1/admin/queue`, and the admin action routes), in addition to any user with `users.isAdmin` set directly in the database. |
+| `REQUIRE_REVIEW` | Set to `1` to require admin approval before a **newly published** package goes live: it's created with `status: "pending"` (visible only to its owner) until approved. Publishing a new version of an already-live package is unaffected. Optional, defaults to off. |
+
+Without either an admin handle or a database row with `isAdmin: true`, `/admin` and
+the admin API are simply inaccessible — there's no default admin account.
+
+### Analytics
+
+| Variable | Description |
+|---|---|
+| `DOWNLOAD_HASH_SALT` | Salt mixed into the per-day client hash used to dedupe download counts (see `src/lib/analytics.ts`). Optional — downloads are still deduped per-client-per-day without it (the UTC day alone still prevents joining the hash across days); set it for a production deployment so the hash can't be brute-forced back to an IP. Rotating it invalidates all existing per-day dedupe hashes. |
+
+### Error monitoring
+
+| Variable | Description |
+|---|---|
+| `SENTRY_DSN` | Sentry DSN, e.g. `https://<publicKey>@<host>/<projectId>`, from a Sentry project's **Client Keys** settings. Optional. |
+
+Every server error is captured through `src/instrumentation.ts`'s `onRequestError`
+into `src/lib/monitoring.ts`'s `captureError()`, which **always** logs one line of
+structured JSON to stderr — so `vercel logs` / `docker logs` / `journalctl` is a
+working error log with zero configuration. When `SENTRY_DSN` is set, the same error
+is additionally POSTed to Sentry's ingest endpoint by hand (no `@sentry/nextjs`
+dependency — this project stays on the zero-extra-bundle path described throughout
+this doc), with a 2-second timeout; a slow or unreachable Sentry never delays or
+fails the request that triggered the error. This is intentionally minimal: no
+breadcrumbs, no performance tracing, no session replay — just "an error happened,
+here's the message and stack." If you need more, swap `sendToSentry` in
+`src/lib/monitoring.ts` for the real `@sentry/nextjs` SDK; `captureError()`'s
+call sites don't need to change.
+
+### Content-Security-Policy
+
+`next.config.ts` sends a `Content-Security-Policy-Report-Only` header on every
+response — **report-only, not enforcing**. It's not yet safe to enforce because (1)
+this version of Next.js emits inline bootstrap/hydration `<script>` tags with no
+nonce, so an enforcing `script-src` would break every page without a nonce-wiring
+change, and (2) creator-supplied READMEs are rendered through `react-markdown` and
+haven't yet been audited for injected `<script>`/`on*=` content. See the comment
+above the `headers()` function in `next.config.ts` for the exact plan to flip it to
+enforcing. Point your browser's devtools console at a deployment to see any
+violations it would currently cause — none should block rendering, since nothing is
+blocked yet.
+
 ### Site
 
 | Variable | Description |
@@ -129,6 +210,8 @@ layering on database/auth/payments.
 | Community members can publish free packages too, tracked in a DB instead of only via PR | `DATABASE_URL` |
 | Sign-in, stars, creator profiles | + `AUTH_SECRET`, and `AUTH_GITHUB_ID`/`AUTH_GITHUB_SECRET` and/or `AUTH_GOOGLE_ID`/`AUTH_GOOGLE_SECRET` |
 | Paid packages, Stripe Connect payouts | + `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` |
+| A moderation queue and admin approval before new packages go live | + `ADMIN_HANDLES` and/or an `isAdmin` row, `REQUIRE_REVIEW` |
+| Errors also forwarded to Sentry (not just stderr) | + `SENTRY_DSN` |
 
 Each tier is additive — nothing above it is required to run the tier below it, and
 every route degrades gracefully rather than 500ing when its dependencies aren't

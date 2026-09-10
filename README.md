@@ -95,9 +95,25 @@ See [`cli/README.md`](./cli/README.md) for every command.
   (`stripe.accounts.create`); checkout and webhook routes return `503` rather than
   erroring when Stripe isn't configured. Paid packages are gated at the file level —
   only `README.md` and `openagent.yaml` are readable before purchase.
-- **Distribution** — every package is downloadable as a tarball
-  (`/api/v1/packages/{owner}/{name}/download`) and installable with the CLI
-  (`npx openagents add owner/name`).
+- **Distribution** — every package is downloadable as a tarball, pinned to a version
+  or latest (`/api/v1/packages/{owner}/{name}/download`,
+  `.../versions/{version}/download`), with an `ETag`/`X-Checksum-Sha256` pair the CLI
+  verifies on install. `npx openagents add owner/name[@version|@range]` resolves
+  `requires` transitively.
+- **API tokens, lifecycle, reviews, analytics** — personal access tokens
+  (`/settings/tokens`) for the CLI and third-party clients; a package moderation
+  lifecycle (`pending`/`live`/`unlisted`/`deprecated`, an admin queue at `/admin`,
+  anonymous reporting); star ratings + written reviews; per-package download/star
+  analytics on a seller `/dashboard`. See [API Reference](./src/content/docs/api.md).
+- **Schema migrations** — `src/lib/db/schema.ts` is versioned as Drizzle SQL
+  migrations checked into `drizzle/` (`npm run db:generate` after a schema edit; CI
+  fails if `drizzle/` drifts from the schema). The hosted deployment still applies
+  schema changes with `npm run db:push` today — see
+  [Self-Hosting](./src/content/docs/self-hosting.md#schema-migrations) for the
+  `db:generate`/`db:migrate` path and how to switch.
+- **Error monitoring** — every server error is logged as structured JSON to stderr;
+  set `SENTRY_DSN` to also forward it to Sentry, no `@sentry/nextjs` dependency
+  required (see `src/instrumentation.ts`, `src/lib/monitoring.ts`).
 
 Full technical spec, routes, and directory layout: **[SPEC.md](./SPEC.md)**.
 
@@ -107,7 +123,8 @@ Once running, browse `/docs` in the app, or read the source directly under
 [`src/content/docs/`](./src/content/docs/): [Getting Started](./src/content/docs/getting-started.md),
 [Package Format](./src/content/docs/package-format.md), [Kinds](./src/content/docs/kinds.md),
 [Runtimes](./src/content/docs/runtimes.md), [CLI](./src/content/docs/cli.md),
-[Publishing](./src/content/docs/publishing.md), [API Reference](./src/content/docs/api.md),
+[Publishing](./src/content/docs/publishing.md), [API Reference](./src/content/docs/api.md)
+(also machine-readable as [OpenAPI 3.1](./public/openapi.json), or `GET /api/v1/openapi`),
 [Self-Hosting](./src/content/docs/self-hosting.md).
 
 ## Contributing
