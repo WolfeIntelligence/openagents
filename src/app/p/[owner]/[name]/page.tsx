@@ -26,6 +26,7 @@ import { ReportButton } from "@/components/ReportButton";
 import { ReviewsTab } from "@/components/ReviewsTab";
 import { RatingStars } from "@/components/RatingStars";
 import { StatsPanel } from "@/components/StatsPanel";
+import { RelatedPackages } from "@/components/RelatedPackages";
 
 type Params = { owner: string; name: string };
 type TabId = "readme" | "files" | "manifest" | "versions" | "reviews";
@@ -340,6 +341,8 @@ export default async function PackagePage({
                 </dl>
               )}
             </SidebarSection>
+
+            <RelatedPackages owner={owner} name={name} />
           </div>
         </aside>
       </div>
@@ -397,8 +400,78 @@ async function FilesTab({
   if (allFiles.length === 0) {
     return <p className="text-sm text-fg-muted">No files listed.</p>;
   }
+
+  // G-C4: group by top-level folder so a package with a `scripts/` or
+  // `templates/` subtree doesn't read as one long flat list. Root-level files
+  // (openagent.yaml, README.md, a bare entry file) have no folder to group
+  // into, so they render first as their own ungrouped table.
+  const root: { path: string; size: number }[] = [];
+  const folders = new Map<string, { path: string; size: number }[]>();
+  for (const file of allFiles) {
+    const slash = file.path.indexOf("/");
+    if (slash === -1) {
+      root.push(file);
+    } else {
+      const folder = file.path.slice(0, slash);
+      if (!folders.has(folder)) folders.set(folder, []);
+      folders.get(folder)!.push(file);
+    }
+  }
+  root.sort((a, b) => a.path.localeCompare(b.path));
+  const sortedFolders = Array.from(folders.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  for (const [, list] of sortedFolders) list.sort((a, b) => a.path.localeCompare(b.path));
+
   return (
-    <div className="overflow-x-auto rounded-lg border border-border">
+    <div className="flex flex-col gap-4">
+      {root.length > 0 && (
+        <FileTable
+          rows={root.map((file) => ({ file, label: file.path }))}
+          owner={owner}
+          name={name}
+          canReadFile={canReadFile}
+        />
+      )}
+      {sortedFolders.map(([folder, list]) => (
+        // Open by default (G-C4): folder grouping should make a large file
+        // list easier to scan, not hide files behind an extra click.
+        <details key={folder} open className="overflow-hidden rounded-lg border border-border">
+          <summary className="cursor-pointer list-none bg-surface px-4 py-2 text-sm font-medium text-fg [&::-webkit-details-marker]:hidden">
+            <span aria-hidden="true" className="mr-1.5 inline-block text-fg-subtle">
+              &#9656;
+            </span>
+            <span className="font-mono">{folder}/</span>
+            <span className="ml-2 text-xs font-normal text-fg-subtle">
+              {list.length} file{list.length === 1 ? "" : "s"}
+            </span>
+          </summary>
+          <FileTable
+            rows={list.map((file) => ({ file, label: file.path.slice(folder.length + 1) }))}
+            owner={owner}
+            name={name}
+            canReadFile={canReadFile}
+            bordered={false}
+          />
+        </details>
+      ))}
+    </div>
+  );
+}
+
+function FileTable({
+  rows,
+  owner,
+  name,
+  canReadFile,
+  bordered = true,
+}: {
+  rows: { file: { path: string; size: number }; label: string }[];
+  owner: string;
+  name: string;
+  canReadFile: (path: string) => boolean;
+  bordered?: boolean;
+}) {
+  return (
+    <div className={`overflow-x-auto ${bordered ? "rounded-lg border border-border" : "border-t border-border"}`}>
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-border bg-surface text-left">
@@ -407,7 +480,7 @@ async function FilesTab({
           </tr>
         </thead>
         <tbody>
-          {allFiles.map((file) => {
+          {rows.map(({ file, label }) => {
             const locked = !canReadFile(file.path);
             return (
               <tr key={file.path} className="border-b border-border last:border-0">
@@ -416,7 +489,7 @@ async function FilesTab({
                     href={`/p/${owner}/${name}/files/${file.path}`}
                     className="font-mono text-accent hover:text-accent-hover"
                   >
-                    {file.path}
+                    {label}
                   </Link>
                   {locked && (
                     <span className="ml-2 rounded border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-fg-subtle">

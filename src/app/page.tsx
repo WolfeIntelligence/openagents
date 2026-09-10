@@ -27,7 +27,7 @@ const STEPS = [
 
 export default async function HomePage() {
   const catalog = await getCatalog();
-  const [featured, kindCounts] = await Promise.all([
+  const [featured, kindCounts, tags, trending] = await Promise.all([
     catalog.featured(6),
     Promise.all(
       PACKAGE_KINDS.map(async (kind) => {
@@ -35,9 +35,21 @@ export default async function HomePage() {
         return [kind, page.total] as const;
       }),
     ),
+    // G-C1: top tags, most-used first — catalog.tags() already sorts that way.
+    catalog.tags(),
+    // G-S4/G-C2: real 7-day unique-download counts; zero in seed-only mode
+    // (see sortByTrending in catalog/db.ts), so this rail only renders once
+    // there's actually something trending to show.
+    catalog.list({ sort: "trending", limit: 6 }),
   ]);
   const counts = Object.fromEntries(kindCounts);
   const paymentsLive = isStripeEnabled();
+  const topTags = tags.slice(0, 12);
+  // `stats.trending` is only ever set by a real `sort=trending` DB query
+  // (see catalog/db.ts's sortByTrending); filtering on it — rather than
+  // lifetime downloads — keeps this rail from padding itself with packages
+  // that have history but nothing installed this week.
+  const trendingItems = trending.items.filter((p) => (p.stats.trending ?? 0) > 0);
 
   return (
     <div>
@@ -116,6 +128,52 @@ export default async function HomePage() {
           />
         )}
       </section>
+
+      {/* Trending (G-S4/G-C2) — most installed this week, real download_events
+          counts. Renders nothing in seed-only/zero-env mode: there's no
+          download history to be "most installed" from yet. */}
+      {trendingItems.length > 0 && (
+        <section className="mx-auto max-w-7xl px-4 py-4 sm:px-6 lg:px-8">
+          <div className="mb-5 flex items-center justify-between">
+            <h2 className="text-xl font-semibold text-fg">Most installed this week</h2>
+            <Link
+              href="/explore?sort=trending"
+              className="text-sm font-medium text-accent hover:text-accent-hover"
+            >
+              See all →
+            </Link>
+          </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {trendingItems.map((pkg) => (
+              <PackageCard key={pkg.id} pkg={pkg} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Tags (G-C1) */}
+      {topTags.length > 0 && (
+        <section className="mx-auto max-w-7xl px-4 py-4 sm:px-6 lg:px-8">
+          <div className="mb-5 flex items-center justify-between">
+            <h2 className="text-xl font-semibold text-fg">Browse by tag</h2>
+            <Link href="/tags" className="text-sm font-medium text-accent hover:text-accent-hover">
+              All tags →
+            </Link>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {topTags.map(({ tag, count }) => (
+              <Link
+                key={tag}
+                href={`/explore?tag=${encodeURIComponent(tag)}`}
+                className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-1.5 text-sm text-fg-muted transition-colors hover:border-border-strong hover:text-fg"
+              >
+                {tag}
+                <span className="font-mono text-xs text-fg-subtle">{count}</span>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* How it works */}
       <section className="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8">

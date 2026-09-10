@@ -4,12 +4,17 @@ import { json, preflight } from "@/lib/api";
 
 export const runtime = "nodejs";
 
-// GET /api/v1/packages?q=&kind=&runtime=&price=&tag=&owner=&sort=&limit=&offset=
+// GET /api/v1/packages?q=&kind=&runtime=&price=&tag=&owner=&sort=&limit=&offset=&facets=
 export async function GET(request: NextRequest) {
   const query = parseCatalogQuery(request.nextUrl.searchParams);
   const catalog = await getCatalog();
-  const page = await catalog.list(query);
-  return json(page);
+  const [page, facets] = await Promise.all([
+    catalog.list(query),
+    // `?facets=1` (G-S3) — optional on the Catalog interface, and only worth
+    // computing when a caller actually asked for it.
+    query.facets ? catalog.facets?.(query) : Promise.resolve(undefined),
+  ]);
+  return json(facets ? { ...page, facets } : page);
 }
 
 export async function OPTIONS() {

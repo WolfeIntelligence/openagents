@@ -4,6 +4,7 @@ import { useRouter, useSearchParams, usePathname } from "next/navigation";
 
 const SORT_OPTIONS: { value: string; label: string }[] = [
   { value: "updated", label: "Recently updated" },
+  { value: "trending", label: "Trending (7 days)" },
   { value: "downloads", label: "Most downloads" },
   { value: "stars", label: "Most stars" },
   { value: "name", label: "Name (A–Z)" },

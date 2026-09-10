@@ -4,8 +4,21 @@ import type { Metadata } from "next";
 import { getCatalog } from "@/lib/catalog";
 import { auth } from "@/lib/auth";
 import { resolveAccess } from "@/lib/access";
+import { CodeBlock } from "@/components/CodeBlock";
+import { Markdown } from "@/components/Markdown";
+import { resolveLanguage } from "@/lib/highlight";
 
 type Params = { owner: string; name: string; path: string[] };
+type FileSearchParams = { view?: string };
+
+/** Extension -> highlight.ts language / display label. `resolveLanguage`
+ *  already knows the common ones; this just strips the path down to an
+ *  extension for it. */
+function languageFor(filePath: string): string | undefined {
+  const dot = filePath.lastIndexOf(".");
+  if (dot === -1) return undefined;
+  return resolveLanguage(filePath.slice(dot + 1));
+}
 
 export async function generateMetadata({
   params,
@@ -17,8 +30,15 @@ export async function generateMetadata({
   return { title: `${filePath} · ${owner}/${name}` };
 }
 
-export default async function FileViewerPage({ params }: { params: Promise<Params> }) {
+export default async function FileViewerPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<Params>;
+  searchParams: Promise<FileSearchParams>;
+}) {
   const { owner, name, path } = await params;
+  const { view } = await searchParams;
   const filePath = path.join("/");
 
   const catalog = await getCatalog();
@@ -36,7 +56,12 @@ export default async function FileViewerPage({ params }: { params: Promise<Param
   const access = await resolveAccess(pkg, session);
   const locked = !access.canReadFile(filePath);
 
-  const lines = locked ? [] : file.content.split("\n");
+  // G-C4: a .md file defaults to its source (so the file viewer stays a code
+  // viewer by default) with an explicit toggle to render it — the inverse of
+  // the README tab, which always renders. `?view=rendered` is server-side
+  // (no client JS needed to pick a view), matching the rest of this page.
+  const isMarkdown = filePath.toLowerCase().endsWith(".md");
+  const rendered = isMarkdown && view === "rendered";
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
@@ -78,38 +103,51 @@ export default async function FileViewerPage({ params }: { params: Promise<Param
         </div>
       ) : (
         <>
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <p className="text-xs text-fg-subtle">{formatBytes(file.size)}</p>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <p className="text-xs text-fg-subtle">{formatBytes(file.size)}</p>
+              {isMarkdown && (
+                // G-C4: server-rendered toggle, no client JS required — a
+                // plain link to the same page with `?view=` swapped.
+                <div className="flex items-center rounded-md border border-border p-0.5 text-xs">
+                  <Link
+                    href={`/p/${owner}/${name}/files/${filePath}`}
+                    aria-current={!rendered ? "page" : undefined}
+                    className={`rounded px-2 py-1 font-medium ${
+                      !rendered ? "bg-accent-muted text-accent" : "text-fg-muted hover:text-fg"
+                    }`}
+                  >
+                    Source
+                  </Link>
+                  <Link
+                    href={`/p/${owner}/${name}/files/${filePath}?view=rendered`}
+                    aria-current={rendered ? "page" : undefined}
+                    className={`rounded px-2 py-1 font-medium ${
+                      rendered ? "bg-accent-muted text-accent" : "text-fg-muted hover:text-fg"
+                    }`}
+                  >
+                    Rendered
+                  </Link>
+                </div>
+              )}
+            </div>
             <a
               href={`/api/v1/packages/${owner}/${name}/files/${filePath}`}
               target="_blank"
               rel="noreferrer"
               className="rounded-md border border-border px-3 py-1.5 text-sm text-fg hover:border-border-strong"
             >
-              View raw
+              Download raw
             </a>
           </div>
 
-          <div className="overflow-x-auto rounded-lg border border-border bg-bg-elevated">
-            <pre className="flex text-sm">
-              <code className="w-full font-mono">
-                <table className="w-full border-collapse">
-                  <tbody>
-                    {lines.map((line, i) => (
-                      <tr key={i}>
-                        <td className="select-none border-r border-border px-3 py-0 text-right align-top text-fg-subtle">
-                          {i + 1}
-                        </td>
-                        <td className="w-full whitespace-pre px-3 py-0 align-top text-fg">
-                          {line || " "}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </code>
-            </pre>
-          </div>
+          {rendered ? (
+            <div className="rounded-lg border border-border bg-bg-elevated p-6">
+              <Markdown content={file.content} owner={owner} name={name} />
+            </div>
+          ) : (
+            <CodeBlock code={file.content} language={languageFor(filePath)} showLineNumbers />
+          )}
         </>
       )}
     </div>
