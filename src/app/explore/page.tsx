@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { getCatalog, parseCatalogQuery } from "@/lib/catalog";
-import { PACKAGE_KINDS, RUNTIME_IDS } from "@/lib/types";
+import { PACKAGE_KINDS, RUNTIME_IDS, type CatalogQuery } from "@/lib/types";
 import { KIND_META, RUNTIMES } from "@/lib/runtimes";
 import { PackageCard } from "@/components/PackageCard";
 import { SortSelect } from "@/components/SortSelect";
@@ -39,6 +39,23 @@ function buildFilterHref(
   return qs ? `/explore?${qs}` : "/explore";
 }
 
+interface ActiveFilter {
+  key: string;
+  label: string;
+}
+
+function activeFilters(query: CatalogQuery): ActiveFilter[] {
+  const filters: ActiveFilter[] = [];
+  if (query.q) filters.push({ key: "q", label: `Search: “${query.q}”` });
+  if (query.kind) filters.push({ key: "kind", label: KIND_META[query.kind]?.label ?? query.kind });
+  if (query.runtime) {
+    filters.push({ key: "runtime", label: RUNTIMES[query.runtime]?.label ?? query.runtime });
+  }
+  if (query.price) filters.push({ key: "price", label: query.price === "free" ? "Free" : "Paid" });
+  if (query.tag) filters.push({ key: "tag", label: query.tag });
+  return filters;
+}
+
 export default async function ExplorePage({
   searchParams,
 }: {
@@ -47,13 +64,22 @@ export default async function ExplorePage({
   const rawParams = await searchParams;
   const catalog = await getCatalog();
   const query = parseCatalogQuery(rawParams);
-  const page = Math.max(1, Number(rawParams.page) || 1);
+  const requestedPage = Math.max(1, Number(rawParams.page) || 1);
 
-  const [result, tags] = await Promise.all([
-    catalog.list({ ...query, limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE }),
+  const [initialResult, tags] = await Promise.all([
+    catalog.list({ ...query, limit: PAGE_SIZE, offset: (requestedPage - 1) * PAGE_SIZE }),
     catalog.tags(),
   ]);
+
+  const totalPages = Math.max(1, Math.ceil(initialResult.total / PAGE_SIZE));
+  const page = Math.min(requestedPage, totalPages);
+  const overflowed = page !== requestedPage && initialResult.total > 0;
+  const result = overflowed
+    ? await catalog.list({ ...query, limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE })
+    : initialResult;
+
   const topTags = tags.slice(0, 20);
+  const filters = activeFilters(query);
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
@@ -63,74 +89,21 @@ export default async function ExplorePage({
       </p>
 
       <div className="mt-6 flex flex-col gap-8 lg:flex-row">
-        <aside className="shrink-0 lg:w-56" aria-label="Filters">
-          <FilterGroup title="Kind">
-            <FilterLink
-              href={buildFilterHref(rawParams, "kind", undefined)}
-              active={!query.kind}
-              label="All kinds"
+        <details className="rounded-lg border border-border lg:hidden">
+          <summary className="cursor-pointer list-none rounded-lg px-4 py-3 text-sm font-medium text-fg [&::-webkit-details-marker]:hidden">
+            Filters{filters.length > 0 ? ` (${filters.length})` : ""}
+          </summary>
+          <div className="border-t border-border px-4 py-4">
+            <FiltersContent
+              rawParams={rawParams}
+              query={query}
+              topTags={topTags}
             />
-            {PACKAGE_KINDS.map((kind) => (
-              <FilterLink
-                key={kind}
-                href={buildFilterHref(rawParams, "kind", kind)}
-                active={query.kind === kind}
-                label={KIND_META[kind]?.label ?? kind}
-              />
-            ))}
-          </FilterGroup>
+          </div>
+        </details>
 
-          <FilterGroup title="Runtime">
-            <FilterLink
-              href={buildFilterHref(rawParams, "runtime", undefined)}
-              active={!query.runtime}
-              label="All runtimes"
-            />
-            {RUNTIME_IDS.map((id) => (
-              <FilterLink
-                key={id}
-                href={buildFilterHref(rawParams, "runtime", id)}
-                active={query.runtime === id}
-                label={RUNTIMES[id]?.label ?? id}
-              />
-            ))}
-          </FilterGroup>
-
-          <FilterGroup title="Price">
-            <FilterLink
-              href={buildFilterHref(rawParams, "price", undefined)}
-              active={!query.price}
-              label="All prices"
-            />
-            <FilterLink
-              href={buildFilterHref(rawParams, "price", "free")}
-              active={query.price === "free"}
-              label="Free"
-            />
-            <FilterLink
-              href={buildFilterHref(rawParams, "price", "paid")}
-              active={query.price === "paid"}
-              label="Paid"
-            />
-          </FilterGroup>
-
-          {topTags.length > 0 && (
-            <FilterGroup title="Tags">
-              <FilterLink
-                href={buildFilterHref(rawParams, "tag", undefined)}
-                active={!query.tag}
-                label="All tags"
-              />
-              {topTags.map(({ tag, count }) => (
-                <FilterLink
-                  key={tag}
-                  href={buildFilterHref(rawParams, "tag", tag)}
-                  active={query.tag === tag}
-                  label={`${tag} (${count})`}
-                />
-              ))}
-            </FilterGroup>
-          )}
+        <aside className="hidden shrink-0 lg:block lg:w-56" aria-label="Filters">
+          <FiltersContent rawParams={rawParams} query={query} topTags={topTags} />
         </aside>
 
         <div className="min-w-0 flex-1">
@@ -147,7 +120,35 @@ export default async function ExplorePage({
             <SortSelect defaultValue={query.sort ?? "updated"} />
           </div>
 
-          {result.items.length > 0 ? (
+          {filters.length > 0 && (
+            <div className="mb-5 flex flex-wrap items-center gap-2">
+              {filters.map((filter) => (
+                <Link
+                  key={filter.key}
+                  href={buildFilterHref(rawParams, filter.key, undefined)}
+                  aria-label={`Remove filter: ${filter.label}`}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-2.5 py-1 text-xs text-fg-muted hover:border-border-strong hover:text-fg"
+                >
+                  {filter.label}
+                  <span aria-hidden="true">&times;</span>
+                </Link>
+              ))}
+              <Link
+                href="/explore"
+                className="text-xs text-fg-subtle underline-offset-2 hover:text-fg hover:underline"
+              >
+                Clear all
+              </Link>
+            </div>
+          )}
+
+          {overflowed && (
+            <p className="mb-5 rounded-md border border-border bg-surface px-3 py-2 text-sm text-fg-muted">
+              Page {requestedPage} doesn&rsquo;t exist &mdash; showing the last page.
+            </p>
+          )}
+
+          {result.total > 0 ? (
             <>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
                 {result.items.map((pkg) => (
@@ -184,9 +185,91 @@ export default async function ExplorePage({
   );
 }
 
+function FiltersContent({
+  rawParams,
+  query,
+  topTags,
+}: {
+  rawParams: RawSearchParams;
+  query: CatalogQuery;
+  topTags: { tag: string; count: number }[];
+}) {
+  return (
+    <>
+      <FilterGroup title="Kind">
+        <FilterLink
+          href={buildFilterHref(rawParams, "kind", undefined)}
+          active={!query.kind}
+          label="All kinds"
+        />
+        {PACKAGE_KINDS.map((kind) => (
+          <FilterLink
+            key={kind}
+            href={buildFilterHref(rawParams, "kind", kind)}
+            active={query.kind === kind}
+            label={KIND_META[kind]?.label ?? kind}
+          />
+        ))}
+      </FilterGroup>
+
+      <FilterGroup title="Runtime">
+        <FilterLink
+          href={buildFilterHref(rawParams, "runtime", undefined)}
+          active={!query.runtime}
+          label="All runtimes"
+        />
+        {RUNTIME_IDS.map((id) => (
+          <FilterLink
+            key={id}
+            href={buildFilterHref(rawParams, "runtime", id)}
+            active={query.runtime === id}
+            label={RUNTIMES[id]?.label ?? id}
+          />
+        ))}
+      </FilterGroup>
+
+      <FilterGroup title="Price">
+        <FilterLink
+          href={buildFilterHref(rawParams, "price", undefined)}
+          active={!query.price}
+          label="All prices"
+        />
+        <FilterLink
+          href={buildFilterHref(rawParams, "price", "free")}
+          active={query.price === "free"}
+          label="Free"
+        />
+        <FilterLink
+          href={buildFilterHref(rawParams, "price", "paid")}
+          active={query.price === "paid"}
+          label="Paid"
+        />
+      </FilterGroup>
+
+      {topTags.length > 0 && (
+        <FilterGroup title="Tags">
+          <FilterLink
+            href={buildFilterHref(rawParams, "tag", undefined)}
+            active={!query.tag}
+            label="All tags"
+          />
+          {topTags.map(({ tag, count }) => (
+            <FilterLink
+              key={tag}
+              href={buildFilterHref(rawParams, "tag", tag)}
+              active={query.tag === tag}
+              label={`${tag} (${count})`}
+            />
+          ))}
+        </FilterGroup>
+      )}
+    </>
+  );
+}
+
 function FilterGroup({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div className="mb-6">
+    <div className="mb-6 last:mb-0">
       <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-fg-subtle">
         {title}
       </h2>

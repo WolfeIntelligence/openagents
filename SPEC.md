@@ -31,9 +31,9 @@ license: MIT                 # SPDX id, or "proprietary" for paid
 tags: [code-review, github, quality]
 runtimes: [claude-code, cursor, codex, generic]   # see Runtime list
 pricing:
-  model: free                # free | one-time | subscription
+  model: free                # free | one-time (subscription is reserved, not yet accepted)
   amount_cents: 0            # required when not free
-  currency: usd
+  currency: usd              # 3-letter lowercase ISO 4217, must be Stripe-supported
 entry: WORKFLOW.md           # main file an agent reads first
 files:                       # every shipped file, relative paths
   - WORKFLOW.md
@@ -49,8 +49,11 @@ requires:                    # optional deps on other packages
 
 Runtime ids: `claude-code`, `cursor`, `codex`, `openai-agents`, `langgraph`, `generic`.
 
-The install target layout per runtime is defined in `src/lib/runtimes.ts`
-(e.g. claude-code → `.claude/skills/<name>/`, cursor → `.cursor/rules/`, generic → `.openagents/<name>/`).
+The install target layout per runtime is defined in `src/lib/runtimes.ts` and matches
+`src/content/docs/runtimes.md`: `claude-code` → `.claude/skills/<name>/`, `cursor` →
+`.cursor/rules/<name>/` (plus a top-level `.cursor/rules/<name>.mdc` shim), `codex` →
+`.codex/skills/<name>/`, `openai-agents` → `.openai-agents/<name>/`, `langgraph` →
+`.langgraph/<name>/`, `generic` → `.openagents/<name>/`.
 
 ## Architecture
 
@@ -58,8 +61,8 @@ The install target layout per runtime is defined in `src/lib/runtimes.ts`
 - **Catalog abstraction** (`src/lib/catalog/index.ts`): `getCatalog()` returns a `Catalog` implementation.
   - `seed` implementation: reads packages from `/catalog/<owner>/<name>/` on disk at build time (free, bundled packages). Always available.
   - `db` implementation: Drizzle ORM + Postgres (Neon / Vercel Postgres). Enabled when `DATABASE_URL` is set. Merges DB packages with seed packages.
-- **Auth**: Auth.js v5, GitHub provider. Enabled only when `AUTH_GITHUB_ID`/`AUTH_GITHUB_SECRET`/`AUTH_SECRET` exist; otherwise sign-in UI shows a "not configured" state. Never crash without env.
-- **Payments**: Stripe Connect (Express accounts). Platform fee = `PLATFORM_FEE_BPS` (default 1000 = 10%). Enabled only when `STRIPE_SECRET_KEY` exists. Checkout route + webhook route exist and return 503 when disabled.
+- **Auth**: Auth.js v5, GitHub and Google providers, each independently enabled once its own client id/secret plus `AUTH_SECRET` exist; otherwise sign-in UI shows a "not configured" state. Never crash without env.
+- **Payments**: Stripe Connect, connected accounts created with **Stripe Accounts v2** (`stripe.v2.core.accounts`, not the legacy v1 Express `stripe.accounts.create`). Platform fee = `PLATFORM_FEE_BPS` (default 1000 = 10%). Enabled only when `STRIPE_SECRET_KEY` exists. Checkout route + webhook route exist and return 503 when disabled. Paid packages are gated file-by-file: only `README.md` and `openagent.yaml` are readable pre-purchase; every other file and the tarball download return 402 for a non-owner who hasn't bought it.
 - **Distribution**: packages are downloadable as a tarball (`/api/v1/packages/{owner}/{name}/download`) and installable with the CLI (`npx openagents add owner/name`).
 - Everything must build and run with **zero env vars** set (seed catalog only). This is the deploy target for v0.1.
 
@@ -69,23 +72,30 @@ All code imports domain types from `src/lib/types.ts` (authoritative, do not red
 
 ## Routes
 
-| route                                  | purpose                                                     |
-|----------------------------------------|-------------------------------------------------------------|
-| `/`                                    | landing: hero, search, featured packages, how it works       |
-| `/explore`                             | browse; query params `q`, `kind`, `runtime`, `price`, `sort` |
-| `/p/[owner]/[name]`                    | package detail: README, manifest, files, versions, install   |
-| `/p/[owner]/[name]/files/[...path]`    | raw file viewer                                             |
-| `/u/[owner]`                           | creator profile + their packages                            |
-| `/publish`                             | how to publish; upload form (DB mode) or CLI instructions   |
-| `/docs`, `/docs/[slug]`                | docs: spec, publishing, CLI, runtimes, pricing              |
-| `/pricing`                             | platform fee / plans                                        |
-| `/api/v1/packages`                     | GET list (same filters as explore), JSON                    |
-| `/api/v1/packages/[owner]/[name]`      | GET package + manifest + readme                             |
-| `/api/v1/packages/[owner]/[name]/download` | GET tar.gz of package files                             |
-| `/api/v1/search?q=`                    | GET search                                                  |
-| `/api/auth/[...nextauth]`              | Auth.js                                                     |
-| `/api/checkout`                        | POST create Stripe Checkout session (503 if disabled)       |
-| `/api/webhooks/stripe`                 | POST Stripe webhook (503 if disabled)                       |
+| route                                          | purpose                                                     |
+|------------------------------------------------|-------------------------------------------------------------|
+| `/`                                            | landing: hero, search, featured packages, how it works       |
+| `/explore`                                     | browse; query params `q`, `kind`, `runtime`, `price`, `sort` |
+| `/p/[owner]/[name]`                            | package detail: README, manifest, files, versions, install   |
+| `/p/[owner]/[name]/files/[...path]`            | raw file viewer                                             |
+| `/u/[owner]`                                   | creator profile + their packages                            |
+| `/publish`                                     | how to publish; upload form (DB mode) or CLI instructions   |
+| `/purchases`                                   | signed-in buyer's purchase history                           |
+| `/settings/payouts`                            | signed-in seller's Connect status, revenue, payouts          |
+| `/signin`                                      | GitHub/Google sign-in                                        |
+| `/docs`, `/docs/[slug]`                        | docs: spec, publishing, CLI, runtimes, pricing              |
+| `/pricing`                                     | platform fee / plans                                        |
+| `/api/v1/packages`                             | GET list (same filters as explore), JSON                    |
+| `/api/v1/packages/[owner]/[name]`              | GET package + manifest + readme                             |
+| `/api/v1/packages/[owner]/[name]/download`     | GET tar.gz of package files (402 if paid + not purchased)   |
+| `/api/v1/packages/[owner]/[name]/files/[...path]` | GET one raw file (402 for non-README/manifest files of an unpurchased paid package) |
+| `/api/v1/packages/[owner]/[name]/star`         | GET stars/starred, POST toggle (auth + DB required)          |
+| `/api/v1/publish`                              | POST publish a package (auth required; DB required)          |
+| `/api/v1/search?q=`                            | GET search                                                   |
+| `/api/auth/[...nextauth]`                      | Auth.js (GitHub, Google)                                     |
+| `/api/checkout`                                | POST create Stripe Checkout session (503 if disabled)       |
+| `/api/connect/onboard`                         | POST create a Stripe Connect onboarding link (auth required) |
+| `/api/webhooks/stripe`                         | POST Stripe webhook (503 if disabled)                       |
 
 ## Directory layout
 

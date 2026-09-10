@@ -1,5 +1,12 @@
 // Runtime metadata (install target layout per runtime) and package-kind
 // display metadata. See SPEC.md "Package format" / "Architecture".
+//
+// SOURCE OF TRUTH: `cli/lib/runtimes.js`'s `installDir()` is authoritative —
+// the CLI is what actually writes files to disk. The six `installDir`
+// strings below (and the docs table in src/content/docs/runtimes.md) must
+// be kept byte-for-byte in sync with it. cli/test/ asserts the CLI and site
+// tables agree (a literal table on each side, since the CLI cannot import
+// from src/); update both when either changes.
 
 import { RUNTIME_IDS, PACKAGE_KINDS, type RuntimeId, type PackageKind } from "@/lib/types";
 
@@ -33,13 +40,13 @@ export const RUNTIMES: Record<RuntimeId, RuntimeMeta> = {
   "openai-agents": {
     id: "openai-agents",
     label: "OpenAI Agents SDK",
-    installDir: (name) => `agents/${name}/`,
+    installDir: (name) => `.openai-agents/${name}/`,
     description: "OpenAI Agents SDK. Installs as an agent definition directory.",
   },
   langgraph: {
     id: "langgraph",
     label: "LangGraph",
-    installDir: (name) => `graphs/${name}/`,
+    installDir: (name) => `.langgraph/${name}/`,
     description: "LangGraph. Installs as a graph definition directory.",
   },
   generic: {

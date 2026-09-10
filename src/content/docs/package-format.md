@@ -52,14 +52,14 @@ requires:
 | `kind` | string | yes | One of `workflow`, `harness`, `rules`, `skill`. See [Kinds](/docs/kinds). |
 | `title` | string | yes | Human-readable display name. |
 | `summary` | string | yes | One-line description, **≤ 160 characters**. Shown in listings. |
-| `license` | string | yes | An SPDX identifier (e.g. `MIT`, `Apache-2.0`), or the literal string `proprietary` for paid packages that don't grant redistribution rights. |
-| `tags` | string[] | no (default `[]`) | Free-form tags used for filtering/search. Convention: 3–6 tags, lowercase, hyphenated. |
+| `license` | string | yes | Should be an SPDX identifier (e.g. `MIT`, `Apache-2.0`), or the literal string `proprietary` for paid packages that don't grant redistribution rights. |
+| `tags` | string[] | no (default `[]`) | Free-form tags used for filtering/search. Convention: 3–6 tags, lowercase, hyphenated. Search treats hyphens as spaces, so `code-review` also matches the terms `code` and `review` individually — see [API Reference](/docs/api). |
 | `runtimes` | string[] | no (default `[]`) | Which runtimes this package supports. Values from the [runtime id list](/docs/runtimes). Should be non-empty in practice — the install command needs at least one supported runtime. |
 | `pricing` | object | yes (defaults to free) | See **Pricing object** below. |
 | `entry` | string | yes | The main file an agent reads first. Must appear in `files`. |
-| `files` | string[] | yes | Every shipped file, as paths relative to the package root. Must include `entry`. The registry and CLI both reject a manifest whose `files`/`entry` don't match what's actually on disk. |
+| `files` | string[] | yes | Every shipped file, as paths relative to the package root. Must include `entry`. The registry and CLI both reject a manifest whose `files`/`entry` don't match what's actually on disk. The registry additionally caps a submission at 200 files, 512 KB per file, and 2 MB total, and rejects binary files — see [Publishing](/docs/publishing). |
 | `inputs` | object[] | no (default `[]`) | Declared runtime parameters. See **Input object** below. |
-| `requires` | string[] | no (default `[]`) | Dependencies on other packages, as `"owner/name@range"` (npm-style semver range), e.g. `openagents/base-rules@^1`. Not auto-installed by the CLI today — informational/documentation until dependency resolution ships. |
+| `requires` | string[] | no (default `[]`) | Dependencies on other packages, as `"owner/name@range"` (npm-style semver range), e.g. `openagents/base-rules@^1`. Still informational only — not auto-installed by the CLI, and not resolved by the registry. |
 | `homepage` | string (URL) | no | Optional link to a project homepage. |
 | `repository` | string (URL) | no | Optional link to the source repository. |
 
@@ -67,9 +67,9 @@ requires:
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `model` | string | yes | `free`, `one-time`, or `subscription`. |
-| `amount_cents` | integer | yes | `0` when `model` is `free`. Must be `> 0` for `one-time`/`subscription` — a paid package with `amount_cents: 0` fails validation. |
-| `currency` | string | yes | ISO 4217 currency code, lowercase (e.g. `usd`). |
+| `model` | string | yes | `free` or `one-time`. `subscription` is a reserved value for a planned future model — the registry currently rejects any submission with `pricing.model: subscription` (`400 Bad Request`). Publish as `one-time` in the meantime. |
+| `amount_cents` | integer | yes | `0` when `model` is `free`. Must be `> 0` for `one-time` — a paid package with `amount_cents: 0` fails validation. |
+| `currency` | string | yes | A 3-letter, lowercase ISO 4217 currency code (e.g. `usd`, `eur`, `jpy`) that Stripe also supports — an unrecognized or non-3-letter code is rejected at publish. Zero-decimal currencies (e.g. `jpy`) are charged as whole units: `amount_cents: 500` for a `jpy` package charges ¥500, not ¥5.00. |
 
 ### Input object (`inputs[]`)
 
@@ -87,12 +87,17 @@ requires:
 - `version` is valid semver.
 - `kind` is one of the four defined kinds.
 - `summary` is ≤ 160 characters.
-- `pricing.model` is a known value; `amount_cents` is a non-negative integer, and
-  `> 0` whenever `model` isn't `free`.
+- `pricing.model` is `free` or `one-time` (`subscription` is rejected); `amount_cents`
+  is a non-negative integer, and `> 0` whenever `model` isn't `free`; `currency` is a
+  3-letter lowercase code Stripe supports.
 - `entry` is present in `files`.
 - Every path in `files` (and `entry`) exists on disk in the package directory.
 - `runtimes` values are all recognized runtime ids.
 - `inputs[].type` is one of the five allowed input types.
+- (Registry only, not the CLI's local `validate`) `files` has at most 200 entries, no
+  file over 512 KB, 2 MB total, and no binary files; the submitting user's handle
+  matches `owner`; the new `version` is strictly greater than the package's current
+  published version.
 
 The CLI's `openagents validate [dir]` command runs exactly these checks locally, with
 no external dependency — see [CLI Reference](/docs/cli).

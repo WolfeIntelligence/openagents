@@ -4,16 +4,18 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { getCatalog } from "@/lib/catalog";
 import { auth } from "@/lib/auth";
-import { hasPurchased } from "@/lib/purchases";
+import { resolveAccess } from "@/lib/access";
 import { KindBadge } from "@/components/KindBadge";
 import { PricingBadge } from "@/components/PricingBadge";
 import { RuntimeChips } from "@/components/RuntimeChips";
 import { InstallBox } from "@/components/InstallBox";
 import { BuyButton } from "@/components/BuyButton";
+import { CheckoutConfirmationBanner } from "@/components/CheckoutConfirmationBanner";
 import { Markdown } from "@/components/Markdown";
 import { StarButton } from "@/components/StarButton";
 import { isStarred } from "@/lib/stats";
 import { isDbEnabled } from "@/lib/db/client";
+import { formatPrice } from "@/lib/format";
 
 type Params = { owner: string; name: string };
 type TabId = "readme" | "files" | "manifest" | "versions";
@@ -49,10 +51,10 @@ export default async function PackagePage({
   searchParams,
 }: {
   params: Promise<Params>;
-  searchParams: Promise<{ tab?: string; checkout?: string }>;
+  searchParams: Promise<{ tab?: string; checkout?: string; session_id?: string }>;
 }) {
   const { owner, name } = await params;
-  const { tab: rawTab, checkout } = await searchParams;
+  const { tab: rawTab, checkout, session_id: checkoutSessionId } = await searchParams;
   const pkg = await loadPackage(owner, name);
   if (!pkg) notFound();
 
@@ -61,14 +63,15 @@ export default async function PackagePage({
 
   const activeTab: TabId = (TABS.find((t) => t.id === rawTab)?.id ?? "readme");
   const { manifest } = pkg;
-  const isFree = manifest.pricing.model === "free" || manifest.pricing.amountCents === 0;
 
+  // Single access gate shared with the download route, the raw-file API, and the
+  // file-viewer page (B2) — `isFree`/`isOwner`/`owns` keep their old names so the
+  // rest of this component (including the BuyButton branch below) reads exactly
+  // as before.
   const session = await auth();
-  const isOwner = Boolean(session?.user?.handle && session.user.handle === owner);
-  const owns =
-    isFree ||
-    isOwner ||
-    (session?.user?.id ? await hasPurchased(session.user.id, owner, name) : false);
+  const access = await resolveAccess(pkg, session);
+  const { isFree, isOwner } = access;
+  const owns = access.canDownload;
 
   const starsEnabled = isDbEnabled();
   const starred = session?.user?.id ? await isStarred(session.user.id, owner, name) : false;
@@ -111,9 +114,10 @@ export default async function PackagePage({
           {/* Action row */}
           <div className="mb-6 flex flex-col gap-4">
             {checkout === "success" && (
-              <div className="rounded-lg border border-accent-border bg-accent-muted p-3 text-sm text-fg">
-                Purchase complete — you own this package.
-              </div>
+              <CheckoutConfirmationBanner
+                userId={session?.user?.id}
+                sessionId={checkoutSessionId}
+              />
             )}
             {checkout === "cancelled" && (
               <div className="rounded-lg border border-border bg-surface p-3 text-sm text-fg-muted">
@@ -151,10 +155,7 @@ export default async function PackagePage({
                 <BuyButton
                   owner={owner}
                   name={name}
-                  label={`Buy — ${(manifest.pricing.amountCents / 100).toLocaleString(undefined, {
-                    style: "currency",
-                    currency: manifest.pricing.currency.toUpperCase(),
-                  })}`}
+                  label={`Buy — ${formatPrice(manifest.pricing.amountCents, manifest.pricing.currency)}`}
                 />
               )}
             </div>
@@ -181,8 +182,10 @@ export default async function PackagePage({
           </div>
 
           <div className="py-6">
-            {activeTab === "readme" && <ReadmeTab readme={pkg.readme} />}
-            {activeTab === "files" && <FilesTab owner={owner} name={name} files={pkg.files} />}
+            {activeTab === "readme" && <ReadmeTab owner={owner} name={name} readme={pkg.readme} />}
+            {activeTab === "files" && (
+              <FilesTab owner={owner} name={name} files={pkg.files} canReadFile={access.canReadFile} />
+            )}
             {activeTab === "manifest" && <ManifestTab manifest={manifest} />}
             {activeTab === "versions" && <VersionsTab versions={pkg.versions} />}
           </div>
@@ -273,23 +276,43 @@ function SidebarSection({ title, children }: { title: string; children: ReactNod
   );
 }
 
-function ReadmeTab({ readme }: { readme: string }) {
+function ReadmeTab({ owner, name, readme }: { owner: string; name: string; readme: string }) {
   if (!readme.trim()) {
     return <p className="text-sm text-fg-muted">This package has no README.</p>;
   }
-  return <Markdown content={readme} />;
+  // owner/name let relative README links and images resolve to the package files.
+  return <Markdown content={readme} owner={owner} name={name} />;
 }
 
-function FilesTab({
+async function FilesTab({
   owner,
   name,
   files,
+  canReadFile,
 }: {
   owner: string;
   name: string;
   files: { path: string; size: number }[];
+  canReadFile: (path: string) => boolean;
 }) {
-  if (files.length === 0) {
+  // The manifest's own file list never includes itself or the README (B15),
+  // even though both are always servable (they're the preview paths on a paid
+  // package) — surface them here so the manifest is discoverable from the
+  // Files tab instead of only by guessing the URL. Most DB-backed packages
+  // already store them as regular files; only add what's missing.
+  const wellKnown = ["openagent.yaml", "README.md"];
+  const missing = wellKnown.filter((p) => !files.some((f) => f.path === p));
+  let extra: { path: string; size: number }[] = [];
+  if (missing.length > 0) {
+    const catalog = await getCatalog();
+    const found = await Promise.all(missing.map((p) => catalog.getFile(owner, name, p)));
+    extra = found
+      .filter((f): f is NonNullable<typeof f> => f !== null)
+      .map((f) => ({ path: f.path, size: f.size }));
+  }
+  const allFiles = [...files, ...extra];
+
+  if (allFiles.length === 0) {
     return <p className="text-sm text-fg-muted">No files listed.</p>;
   }
   return (
@@ -302,19 +325,27 @@ function FilesTab({
           </tr>
         </thead>
         <tbody>
-          {files.map((file) => (
-            <tr key={file.path} className="border-b border-border last:border-0">
-              <td className="px-4 py-2">
-                <Link
-                  href={`/p/${owner}/${name}/files/${file.path}`}
-                  className="font-mono text-accent hover:text-accent-hover"
-                >
-                  {file.path}
-                </Link>
-              </td>
-              <td className="px-4 py-2 font-mono text-fg-subtle">{formatBytes(file.size)}</td>
-            </tr>
-          ))}
+          {allFiles.map((file) => {
+            const locked = !canReadFile(file.path);
+            return (
+              <tr key={file.path} className="border-b border-border last:border-0">
+                <td className="px-4 py-2">
+                  <Link
+                    href={`/p/${owner}/${name}/files/${file.path}`}
+                    className="font-mono text-accent hover:text-accent-hover"
+                  >
+                    {file.path}
+                  </Link>
+                  {locked && (
+                    <span className="ml-2 rounded border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-fg-subtle">
+                      Locked
+                    </span>
+                  )}
+                </td>
+                <td className="px-4 py-2 font-mono text-fg-subtle">{formatBytes(file.size)}</td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

@@ -52,9 +52,18 @@ npm run dev
 Open [http://localhost:3000](http://localhost:3000). The app builds and runs with
 **zero environment variables set** — you get the full site backed by the bundled seed
 catalog, with the database-backed catalog, sign-in, and payments simply disabled until
-configured. See [`src/content/docs/self-hosting.md`](./src/content/docs/self-hosting.md)
-(or `/docs/self-hosting` once running) for the full environment variable reference and
-how to layer on a database, GitHub auth, and Stripe Connect payments.
+configured. Copy [`.env.example`](./.env.example) to `.env.local` to layer on a
+database, GitHub/Google auth, and Stripe Connect payments — see
+[`src/content/docs/self-hosting.md`](./src/content/docs/self-hosting.md)
+(or `/docs/self-hosting` once running) for the full environment variable reference.
+
+```bash
+npx tsc --noEmit && npm run lint && npm run check:catalog && npm test --if-present
+```
+
+runs the same checks as CI (see [`.github/workflows/ci.yml`](./.github/workflows/ci.yml)),
+which also builds the site with zero env vars set to guard the zero-config promise
+above, and separately smoke-tests the CLI in [`cli/`](./cli).
 
 ### CLI
 
@@ -78,11 +87,14 @@ See [`cli/README.md`](./cli/README.md) for every command.
   available, zero config); a `db` implementation (Drizzle ORM + Postgres/Neon) is
   enabled when `DATABASE_URL` is set and merges DB-backed packages with the seed
   catalog.
-- **Auth** — Auth.js v5 with the GitHub provider, enabled only when its env vars are
-  present; the app never crashes without them.
-- **Payments** — Stripe Connect (Express accounts) for paid packages, with a
-  configurable platform fee (default 10%); checkout and webhook routes return `503`
-  rather than erroring when Stripe isn't configured.
+- **Auth** — Auth.js v5 with GitHub and Google providers, each enabled independently
+  once its own env vars are present; the app never crashes without them.
+- **Payments** — Stripe Connect for paid packages, with a configurable platform fee
+  (default 10%). Connected accounts use **Stripe Accounts v2**
+  (`stripe.v2.core.accounts`), not the legacy v1 Express flow
+  (`stripe.accounts.create`); checkout and webhook routes return `503` rather than
+  erroring when Stripe isn't configured. Paid packages are gated at the file level —
+  only `README.md` and `openagent.yaml` are readable before purchase.
 - **Distribution** — every package is downloadable as a tarball
   (`/api/v1/packages/{owner}/{name}/download`) and installable with the CLI
   (`npx openagents add owner/name`).

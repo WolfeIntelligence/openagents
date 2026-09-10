@@ -8,5 +8,5 @@ export function run(args) {
   console.log(`${registry}/api/v1/publish`);
   console.log("");
   console.log("Free packages: open a PR adding your package under catalog/<owner>/<name>/");
-  console.log("in https://github.com/WolfeIntelligence/openagents/openagents — see CONTRIBUTING.md.");
+  console.log("in https://github.com/WolfeIntelligence/openagents — see CONTRIBUTING.md.");
 }

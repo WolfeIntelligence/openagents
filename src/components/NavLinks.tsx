@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-const NAV_LINKS = [
+export const NAV_LINKS = [
   { href: "/explore", label: "Explore" },
   { href: "/docs", label: "Docs" },
   { href: "/pricing", label: "Pricing" },

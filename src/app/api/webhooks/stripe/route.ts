@@ -3,7 +3,13 @@ import type Stripe from "stripe";
 import { getConnectedAccountStatus, getStripe, isStripeEnabled } from "@/lib/stripe";
 import { eq } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
-import { purchases, users } from "@/lib/db/schema";
+import { users } from "@/lib/db/schema";
+import { markSessionFailed, recordPaidPurchase, setStatusByPaymentIntent } from "@/lib/purchases";
+
+/** Extracts a PaymentIntent id whether the field came back expanded or not. */
+function paymentIntentId(pi: string | Stripe.PaymentIntent | null | undefined): string | undefined {
+  return typeof pi === "string" ? pi : pi?.id;
+}
 
 export async function POST(req: NextRequest) {
   if (!isStripeEnabled()) {
@@ -63,29 +69,98 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ received: true });
   }
 
-  if (event.type === "checkout.session.completed") {
+  // A Checkout Session only ever represents a real sale once Stripe considers the
+  // payment collected — `checkout.session.completed` fires for async payment methods
+  // too, before the money has actually arrived, so `payment_status` (not the event
+  // type) is what gates recording a purchase here.
+  if (
+    event.type === "checkout.session.completed" ||
+    event.type === "checkout.session.async_payment_succeeded"
+  ) {
+    const checkoutSession = event.data.object as Stripe.Checkout.Session;
+    if (checkoutSession.payment_status === "paid") {
+      const packageId = checkoutSession.metadata?.packageId;
+      const buyerUserId = checkoutSession.metadata?.buyerUserId;
+      const db = getDb();
+      if (db && packageId && buyerUserId) {
+        try {
+          await recordPaidPurchase(db, {
+            userId: buyerUserId,
+            packageId,
+            stripeSessionId: checkoutSession.id,
+            stripePaymentIntent: paymentIntentId(checkoutSession.payment_intent),
+            amountCents: checkoutSession.amount_total ?? 0,
+            currency: checkoutSession.currency,
+          });
+        } catch {
+          // DB write failed — ask Stripe to retry rather than silently dropping a sale.
+          return NextResponse.json({ error: "failed to record purchase" }, { status: 500 });
+        }
+      }
+    }
+  }
+
+  if (event.type === "checkout.session.async_payment_failed") {
     const checkoutSession = event.data.object as Stripe.Checkout.Session;
     const db = getDb();
-    const packageId = checkoutSession.metadata?.packageId;
-    const buyerUserId = checkoutSession.metadata?.buyerUserId;
+    if (db) {
+      try {
+        await markSessionFailed(db, checkoutSession.id);
+      } catch {
+        return NextResponse.json({ error: "failed to update purchase" }, { status: 500 });
+      }
+    }
+  }
 
-    if (db && packageId && buyerUserId) {
-      const paymentIntent = checkoutSession.payment_intent;
-      await db.insert(purchases).values({
-        userId: buyerUserId,
-        packageId,
-        stripeSessionId: checkoutSession.id,
-        stripePaymentIntent: typeof paymentIntent === "string" ? paymentIntent : paymentIntent?.id,
-        amountCents: checkoutSession.amount_total ?? 0,
-        status: "paid",
-      });
+  if (event.type === "charge.refunded") {
+    const charge = event.data.object as Stripe.Charge;
+    const piId = paymentIntentId(charge.payment_intent);
+    const db = getDb();
+    // A partial refund leaves the purchase `paid` — only a full refund revokes access.
+    if (db && piId && charge.amount_refunded >= charge.amount) {
+      try {
+        await setStatusByPaymentIntent(db, piId, "refunded");
+      } catch {
+        return NextResponse.json({ error: "failed to update purchase" }, { status: 500 });
+      }
+    }
+  }
+
+  if (event.type === "charge.dispute.created") {
+    const dispute = event.data.object as Stripe.Dispute;
+    const piId = paymentIntentId(dispute.payment_intent);
+    const db = getDb();
+    if (db && piId) {
+      try {
+        await setStatusByPaymentIntent(db, piId, "disputed");
+      } catch {
+        return NextResponse.json({ error: "failed to update purchase" }, { status: 500 });
+      }
+    }
+  }
+
+  if (event.type === "charge.dispute.closed") {
+    const dispute = event.data.object as Stripe.Dispute;
+    const piId = paymentIntentId(dispute.payment_intent);
+    const db = getDb();
+    if (db && piId) {
+      try {
+        await setStatusByPaymentIntent(db, piId, dispute.status === "won" ? "paid" : "refunded");
+      } catch {
+        return NextResponse.json({ error: "failed to update purchase" }, { status: 500 });
+      }
     }
   }
 
   if (event.type === "account.updated") {
     const account = event.data.object as Stripe.Account;
     const db = getDb();
-    if (db && account.id) {
+    // Only trust this when Stripe actually sent both flags — a partial/legacy payload
+    // missing one must not be read as "false" and flip a genuinely onboarded seller
+    // back to not-onboarded.
+    const hasBooleanFlags =
+      typeof account.charges_enabled === "boolean" && typeof account.details_submitted === "boolean";
+    if (db && account.id && hasBooleanFlags) {
       await db
         .update(users)
         .set({ stripeOnboarded: Boolean(account.charges_enabled && account.details_submitted) })

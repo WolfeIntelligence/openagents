@@ -1,11 +1,13 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import type { Metadata } from "next";
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { getDb, isDbEnabled } from "@/lib/db/client";
 import { packages, purchases } from "@/lib/db/schema";
 import { EmptyState } from "@/components/EmptyState";
+import { formatPrice } from "@/lib/format";
+import { PurchaseStatusBadge } from "@/components/PurchaseStatusBadge";
 
 export const metadata: Metadata = {
   title: "Purchases",
@@ -56,7 +58,10 @@ async function PurchasesTable({
       name: packages.name,
       title: packages.title,
       amountCents: purchases.amountCents,
-      currency: packages.currency,
+      // Rows written before the column existed carry no currency of their own; the
+      // package's current currency is what those were charged in.
+      currency: sql<string>`coalesce(${purchases.currency}, ${packages.currency})`,
+      status: purchases.status,
       createdAt: purchases.createdAt,
     })
     .from(purchases)
@@ -89,6 +94,10 @@ async function PurchasesTable({
             <th className="px-4 py-2 font-medium text-fg-muted">Package</th>
             <th className="px-4 py-2 font-medium text-fg-muted">Date</th>
             <th className="px-4 py-2 font-medium text-fg-muted">Amount</th>
+            <th className="px-4 py-2 font-medium text-fg-muted">Status</th>
+            <th className="px-4 py-2 font-medium text-fg-muted">
+              <span className="sr-only">Download</span>
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -107,10 +116,22 @@ async function PurchasesTable({
                 {row.createdAt.toLocaleDateString()}
               </td>
               <td className="px-4 py-2 font-mono text-fg">
-                {(row.amountCents / 100).toLocaleString(undefined, {
-                  style: "currency",
-                  currency: row.currency.toUpperCase(),
-                })}
+                {formatPrice(row.amountCents, row.currency)}
+              </td>
+              <td className="px-4 py-2">
+                <PurchaseStatusBadge status={row.status} />
+              </td>
+              <td className="px-4 py-2 text-right">
+                {row.status === "paid" ? (
+                  <a
+                    href={`/api/v1/packages/${row.owner}/${row.name}/download`}
+                    className="font-medium text-accent hover:text-accent-hover"
+                  >
+                    Download
+                  </a>
+                ) : (
+                  <span className="text-fg-subtle">—</span>
+                )}
               </td>
             </tr>
           ))}

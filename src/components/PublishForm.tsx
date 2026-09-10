@@ -24,11 +24,19 @@ function stripTopDir(path: string): string {
   return idx === -1 ? path : path.slice(idx + 1);
 }
 
+interface PublishSuccess {
+  id: string;
+  version: string;
+  url: string;
+}
+
 export function PublishForm() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [fileNames, setFileNames] = useState<string[]>([]);
+  const [changelog, setChangelog] = useState("");
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [errors, setErrors] = useState<string[]>([]);
+  const [published, setPublished] = useState<PublishSuccess | null>(null);
 
   function handleFiles(e: ChangeEvent<HTMLInputElement>) {
     const fileList = e.target.files;
@@ -59,10 +67,15 @@ export function PublishForm() {
       const res = await fetch("/api/v1/publish", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ files }),
+        body: JSON.stringify({
+          files,
+          ...(changelog.trim() ? { changelog: changelog.trim() } : {}),
+        }),
       });
 
       if (res.ok) {
+        const data = (await res.json().catch(() => null)) as PublishSuccess | null;
+        if (data?.url) setPublished(data);
         setStatus("success");
         return;
       }
@@ -87,9 +100,17 @@ export function PublishForm() {
   if (status === "success") {
     return (
       <div className="rounded-lg border border-accent-border bg-accent-muted p-6 text-sm text-fg">
-        <p className="font-semibold">Package published.</p>
+        <p className="font-semibold">
+          {published ? `${published.id}@${published.version} is live.` : "Package published."}
+        </p>
         <p className="mt-1 text-fg-muted">
-          It should now appear in Explore once it finishes processing.
+          {/* There is no review queue — a publish goes live immediately. */}
+          It&apos;s live now, no review queue.{" "}
+          {published ? (
+            <Link href={published.url} className="text-accent hover:text-accent-hover">
+              View the package
+            </Link>
+          ) : null}
         </p>
       </div>
     );
@@ -125,6 +146,22 @@ export function PublishForm() {
           ))}
         </ul>
       )}
+
+      <div>
+        <label htmlFor="oa-publish-changelog" className="mb-1.5 block text-sm font-medium text-fg">
+          What changed in this version{" "}
+          <span className="font-normal text-fg-subtle">(optional)</span>
+        </label>
+        <textarea
+          id="oa-publish-changelog"
+          value={changelog}
+          onChange={(e) => setChangelog(e.target.value)}
+          rows={3}
+          maxLength={4000}
+          placeholder="Leave blank to use CHANGELOG.md's first section, if you included one."
+          className="block w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-fg placeholder:text-fg-subtle focus:border-border-strong focus:outline-none"
+        />
+      </div>
 
       {errors.length > 0 && (
         <div className="rounded-md border border-danger/40 bg-danger/10 p-3 text-sm text-danger">

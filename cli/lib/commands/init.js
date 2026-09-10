@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { NAME_RE, PACKAGE_KINDS, RUNTIME_IDS } from "../manifest.js";
+import { formatYamlScalar } from "../yaml.js";
 
 const ENTRY_BY_KIND = {
   workflow: "WORKFLOW.md",
@@ -33,9 +34,9 @@ name: ${name}
 owner: ${owner}
 version: ${version}
 kind: ${kind}
-title: ${title}
-summary: ${summary}
-license: ${license}
+title: ${formatYamlScalar(title)}
+summary: ${formatYamlScalar(summary)}
+license: ${formatYamlScalar(license)}
 tags: ${tagsLine}
 runtimes: ${runtimesLine}
 pricing:

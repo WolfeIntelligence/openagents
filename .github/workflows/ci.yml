@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  site:
+    name: Site (typecheck, lint, catalog, build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # Next generates route/layout prop types (e.g. LayoutProps) into .next/types;
+      # tsc needs them before a build has ever run.
+      - name: Generate Next.js types
+        run: npx next typegen
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Catalog check (openagent.yaml validity + .meta.json presence)
+        run: npm run check:catalog
+
+      - name: Unit tests
+        run: npm test --if-present
+
+      # Zero-env guarantee: the app must build with no environment variables set at
+      # all — no DATABASE_URL, no auth, no Stripe keys. This is what makes the seed
+      # catalog, docs, and CLI/API usable on a fresh deploy with zero configuration
+      # (see src/content/docs/self-hosting.md). Do not add an `env:` block here.
+      - name: Build with zero env vars
+        run: npx next build
+
+  cli:
+    name: CLI
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cli
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: cli/package-lock.json
+
+      - run: npm ci
+
+      - name: Unit tests
+        run: npm test --if-present
+
+      - name: Smoke test (--help)
+        run: node bin/openagents.js --help

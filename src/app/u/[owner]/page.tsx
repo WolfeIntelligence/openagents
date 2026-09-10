@@ -1,10 +1,15 @@
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
-import { getCatalog } from "@/lib/catalog";
+import { getCatalog, parseCatalogQuery } from "@/lib/catalog";
 import { PackageCard } from "@/components/PackageCard";
 import { EmptyState } from "@/components/EmptyState";
+import { SortSelect } from "@/components/SortSelect";
+import { Pagination } from "@/components/Pagination";
 
 type Params = { owner: string };
+type RawSearchParams = Record<string, string | string[] | undefined>;
+
+const PAGE_SIZE = 24;
 
 export async function generateMetadata({
   params,
@@ -18,12 +23,27 @@ export async function generateMetadata({
   return { title: creator.displayName, description: creator.bio };
 }
 
-export default async function CreatorPage({ params }: { params: Promise<Params> }) {
+export default async function CreatorPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<Params>;
+  searchParams: Promise<RawSearchParams>;
+}) {
   const { owner } = await params;
+  const rawParams = await searchParams;
   const catalog = await getCatalog();
+  const query = parseCatalogQuery(rawParams);
+  const page = Math.max(1, Number(rawParams.page) || 1);
+
   const [creator, packages] = await Promise.all([
     catalog.creator(owner),
-    catalog.list({ owner, limit: 100 }),
+    catalog.list({
+      owner,
+      sort: query.sort,
+      limit: PAGE_SIZE,
+      offset: (page - 1) * PAGE_SIZE,
+    }),
   ]);
   if (!creator) notFound();
 
@@ -54,12 +74,32 @@ export default async function CreatorPage({ params }: { params: Promise<Params> 
       </div>
 
       <div className="mt-8">
-        {packages.items.length > 0 ? (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {packages.items.map((pkg) => (
-              <PackageCard key={pkg.id} pkg={pkg} />
-            ))}
+        {packages.total > 0 && (
+          <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-fg-muted">
+              {packages.total.toLocaleString()} package{packages.total === 1 ? "" : "s"}
+            </p>
+            <SortSelect defaultValue={query.sort ?? "updated"} />
           </div>
+        )}
+
+        {packages.items.length > 0 ? (
+          <>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {packages.items.map((pkg) => (
+                <PackageCard key={pkg.id} pkg={pkg} />
+              ))}
+            </div>
+            <div className="mt-8">
+              <Pagination
+                total={packages.total}
+                page={page}
+                pageSize={PAGE_SIZE}
+                searchParams={rawParams}
+                basePath={`/u/${owner}`}
+              />
+            </div>
+          </>
         ) : (
           <EmptyState
             title="No published packages yet"
