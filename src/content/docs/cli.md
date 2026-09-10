@@ -1,15 +1,15 @@
 ---
 title: CLI
-description: Every openagents CLI command — add, search, info, init, validate, publish, list, remove.
+description: Every openagents CLI command — add, update, publish, login, search, info, init, validate, list, remove.
 order: 5
 ---
 
 # CLI
 
-`openagents` is a standalone npm package (zero runtime dependencies besides `tar`,
-Node.js 18+) for installing, searching, and scaffolding OpenAgents packages from the
-command line. Every request it makes sends `User-Agent: openagents-cli/<version>` so
-the registry can attribute installs.
+`openagents` (0.3.0) is a standalone npm package (zero runtime dependencies besides
+`tar`, Node.js 18+) for installing, searching, publishing, and scaffolding OpenAgents
+packages from the command line. Every request it makes sends
+`User-Agent: openagents-cli/<version>` so the registry can attribute installs.
 
 ```bash
 npx openagents --help
@@ -22,39 +22,137 @@ silent no-op.
 
 ## `openagents add <owner/name>`
 
-Downloads a package and installs it into the right directory for your runtime,
-generating a runtime-specific discovery shim so the target runtime actually picks it
-up (not just a directory of files) — see [Runtimes](/docs/runtimes) for the full
-per-runtime breakdown.
+Downloads a package (and, by default, everything it `requires`) and installs it into
+the right directory for your runtime, generating a runtime-specific discovery shim so
+the target runtime actually picks it up (not just a directory of files) — see
+[Runtimes](/docs/runtimes) for the full per-runtime breakdown.
 
 ```bash
 openagents add openagents/pr-reviewer
+openagents add openagents/pr-reviewer@1.2.0     # exact pinned version
+openagents add openagents/pr-reviewer@^1        # highest 1.x version
 openagents add openagents/pr-reviewer --runtime claude-code
 openagents add openagents/pr-reviewer --dir ./my-project
+openagents add openagents/pr-reviewer --no-deps # skip `requires` resolution entirely
 ```
 
-`owner/name@version` is accepted as a ref (e.g. `openagents/pr-reviewer@1.2.0`), but
-the registry doesn't support fetching a pinned historical version yet — `add` parses
-the version, warns that it's ignored, and installs the current `latest` instead.
+`owner/name@version` accepts either an exact version or an npm-style semver range
+(`^1`, `~1.2`, `>=1.0.0 <2.0.0`, etc.) — resolved against
+[`GET /versions`](/docs/api#get-apiv1packagesownernameversions), which lists every
+published version. No `@` suffix installs the highest version available (equivalent
+to `@*`).
+
+### Dependency resolution
+
+Unless `--no-deps` is passed, `add` reads the manifest's `requires` field (see
+[Package Format](/docs/package-format)) and installs every dependency too, walking
+transitively — a dependency's own `requires` are followed the same way. Two failure
+modes are reported clearly rather than silently picking one side:
+
+- **Cycle** — package A requires B (transitively) requires A again. Reported with the
+  full cycle path; nothing is installed.
+- **Conflict** — two different packages in the graph require incompatible version
+  ranges of the same dependency (e.g. one wants `^1`, another wants `^2`, with no
+  version satisfying both). Reported with both requesters and their ranges; nothing is
+  installed. There's no "install both side by side" — one version wins, or you fix the
+  ranges.
+
+### Integrity
+
+Every downloaded tarball is checked against the `X-Checksum-Sha256` header the
+registry sends (see [API Reference](/docs/api#get-apiv1packagesownernameversionsversiondownload))
+by hashing the extracted bytes and comparing — a mismatch aborts the install with
+nothing left partially written. The checksum is recorded as `integrity` in
+`.openagents/installed.json` (see **Lockfile** below) so a later `openagents update`
+or `outdated` check can tell a re-download apart from a tampered one.
 
 | Flag | Description |
 |---|---|
 | `--runtime <id>` | One of `claude-code`, `cursor`, `codex`, `openai-agents`, `langgraph`, `generic`. Auto-detected when omitted — see [Runtimes](/docs/runtimes). |
 | `--registry <url>` | Registry base URL. Defaults to `OPENAGENTS_REGISTRY` or `https://openagents-nu.vercel.app`. |
 | `--dir <path>` | Project root to install into. Defaults to the current directory. |
+| `--no-deps` | Skip `requires` resolution — install only the named package. |
 | `--json` | Print the result as JSON instead of human-readable text. |
 
-Under the hood: `GET /api/v1/packages/{owner}/{name}` for the manifest, then
-`GET /api/v1/packages/{owner}/{name}/download?runtime=<id>` for the tarball, extracted
-into the runtime's install directory, followed by writing that runtime's shim (a
-`SKILL.md` with frontmatter, a `.cursor/rules/<name>.mdc` file, etc.) After installing,
-`add` prints a runtime-specific "next step" hint — e.g. restart Claude Code, or check
-`.cursor/rules/` picked it up — and records the install in `.openagents/installed.json`
-(see **Lockfile** below).
+Under the hood: `GET /api/v1/packages/{owner}/{name}/versions` to resolve a range to
+an exact version, then `GET .../versions/{version}` for that version's manifest, then
+`GET .../versions/{version}/download?runtime=<id>` for the tarball, extracted into the
+runtime's install directory, followed by writing that runtime's shim (a `SKILL.md`
+with frontmatter, a `.cursor/rules/<name>.mdc` file, etc.) After installing, `add`
+prints a runtime-specific "next step" hint — e.g. restart Claude Code, or check
+`.cursor/rules/` picked it up — and prints a deprecation warning if the package (or
+any resolved dependency) has `status: "deprecated"` (see
+[Publishing](/docs/publishing#package-lifecycle)).
 
 If the package is paid and you haven't purchased it, `add` fails with the server's
 `402` reason surfaced directly (not a raw HTTP error) and prints the package's page URL
-so you can buy it in the browser: buying from the CLI itself isn't supported yet.
+so you can buy it in the browser: buying from the CLI itself isn't supported yet. If
+you're signed in (`openagents login`) and the package is paid, the download request
+carries your token so a purchase you already made is honored.
+
+## `openagents outdated`
+
+Compares every entry in `.openagents/installed.json` against the registry's latest
+version for that package and prints what's behind.
+
+```bash
+openagents outdated
+openagents outdated --json
+```
+
+```
+PACKAGE                       INSTALLED   LATEST   
+openagents/pr-reviewer        1.1.0       1.2.0
+openagents/agent-guardrails   2.0.0       2.0.0    (up to date, omitted from non-json output)
+```
+
+## `openagents update [owner/name]`
+
+Re-resolves and reinstalls, respecting each package's originally-installed version
+range (an exact pin stays pinned; a range like `^1` re-resolves to the current highest
+match). With no argument, updates every installed package.
+
+```bash
+openagents update                        # everything, within each package's existing range
+openagents update openagents/pr-reviewer # just this one
+openagents update --latest               # ignore the original range; jump to the true latest for everything
+```
+
+| Flag | Description |
+|---|---|
+| `--latest` | Update to the newest published version regardless of the range the package was originally installed with. |
+| `--dir <path>` | Project root. Defaults to the current directory. |
+
+## `openagents login [--token <token>]`
+
+Authenticates the CLI by storing a personal access token.
+
+```bash
+openagents login                    # prompts for a token (create one at /settings/tokens)
+openagents login --token oa_...     # non-interactive, e.g. in CI
+```
+
+The token is saved to the config file (see **Configuration** below) and used as
+`Authorization: Bearer` on every subsequent request that needs it (`publish`, paid
+`add`, `whoami`). It is never sent to any registry other than the one the token was
+saved against.
+
+## `openagents logout`
+
+Removes the stored token from the config file. Does not revoke it server-side — do
+that from [`/settings/tokens`](/settings/tokens) or `DELETE /api/v1/tokens/{id}` if the
+token itself needs to stop working, not just stop being used locally.
+
+## `openagents whoami`
+
+Prints the identity associated with the stored token (or `OPENAGENTS_TOKEN`), via
+`GET /api/v1/me` — handle, name, and which scopes the token carries. Exits non-zero
+with a clear message if not logged in or the token is invalid/revoked.
+
+```bash
+openagents whoami
+openagents whoami --json
+```
 
 ## `openagents list`
 
@@ -174,32 +272,67 @@ version-must-increase), which only the server enforces at publish time.
 Exits with a non-zero status and a list of issues if anything fails; prints a one-line
 confirmation (kind, entry, file count) on success.
 
-## `openagents publish`
+## `openagents publish [dir]`
 
 ```bash
-openagents publish
+openagents publish                                  # current directory
+openagents publish ./catalog/me/my-package
+openagents publish --dry-run                         # validate + show what would be sent, publish nothing
+openagents publish --changelog "Fix the flaky retry"
+openagents publish --from-github github.com/me/my-package
 ```
 
-Publishing directly from the CLI is not implemented yet — the command prints where to
-go instead: the hosted publish flow (`<registry>/publish`), the raw API
-(`POST /api/v1/publish`), or — for free packages — how to open a PR against
-`catalog/<owner>/<name>/`. See [Publishing](/docs/publishing).
+Requires `openagents login` first (or `OPENAGENTS_TOKEN` set) — the stored token needs
+the `publish` scope. Runs the same local checks as `openagents validate [dir]`, then
+calls `POST /api/v1/publish` (or, with `--from-github <url>`,
+`POST /api/v1/publish/import` — see [Publishing](/docs/publishing#publish-from-github))
+directly, so there's no separate PR step for a paid package or a database-backed free
+one. (Free packages destined for the bundled seed catalog still go through a pull
+request against `catalog/<owner>/<name>/` instead — see [Publishing](/docs/publishing)
+for when to use which path.)
+
+| Flag | Description |
+|---|---|
+| `--dry-run` | Validate and print what would be published (files, target version, whether this looks like a new package vs. a new version) without calling the registry. |
+| `--changelog <text>` | Changelog for this version, forwarded as-is to the API. |
+| `--from-github <url>` | Publish from a public GitHub repo instead of `dir` — see [Publishing](/docs/publishing#publish-from-github) for the accepted URL forms. |
+
+```ts
+// printed on success
+{ id: "me/my-package", version: "1.0.0", url: "https://.../p/me/my-package", status: "live" | "pending" }
+```
+
+`status: "pending"` means the registry has `REQUIRE_REVIEW` on and this was a
+brand-new package — see [Publishing](/docs/publishing#review-mode-require_review1).
 
 ## Lockfile: `.openagents/installed.json`
 
-`add`, `list`, and `remove` all read/write a lockfile at `.openagents/installed.json`
-in the project root (or `--dir`), recording each installed package's id, version,
-runtime, and install path. It's local, plain JSON, and safe to commit if you want
-`openagents list` to reflect what's checked in.
+`add`, `list`, `remove`, `outdated`, and `update` all read/write a lockfile at
+`.openagents/installed.json` in the project root (or `--dir`). It's local, plain JSON,
+and safe to commit if you want `openagents list` to reflect what's checked in.
+
+**`lockfileVersion: 2`** (this CLI version) adds, per installed package: the version
+**range** originally requested (so `update` without `--latest` knows what it's still
+allowed to move within), and `integrity` — the `X-Checksum-Sha256` recorded at install
+time (see **Integrity** under `add` above). A v1 lockfile (no `lockfileVersion` field,
+from CLI < 0.3.0) is read fine — entries just have no range/integrity until they're
+next reinstalled or updated, at which point they're upgraded in place.
 
 ## Configuration
 
 | Env var | Purpose |
 |---|---|
 | `OPENAGENTS_REGISTRY` | Default registry base URL for every command; overridden per-invocation by `--registry`. |
+| `OPENAGENTS_TOKEN` | Personal access token, used instead of (and overriding) whatever `openagents login` has stored — handy in CI where you don't want to write the config file at all. |
+
+`openagents login` writes the token to a config file at
+`~/.config/openagents/config.json` (Linux/macOS) or
+`%APPDATA%\openagents\config.json` (Windows) — plain JSON, `{ "token": "oa_..." }`,
+scoped per-machine, not committed to a project. `OPENAGENTS_TOKEN` always wins over
+this file when both are present.
 
 ## Global flags
 
 `-h` / `--help` prints usage. `-v` / `--version` prints the installed CLI version.
-`--json`, where supported (`search`, `info`, `add`, `list`), prints machine-readable
-output instead of formatted text.
+`--json`, where supported (`search`, `info`, `add`, `list`, `outdated`, `whoami`),
+prints machine-readable output instead of formatted text.
