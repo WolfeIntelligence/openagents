@@ -18,6 +18,10 @@ jobs:
 
       - run: npm ci
 
+      # Next generates route/layout prop types (e.g. LayoutProps) into .next/types;
+      # tsc needs them before a build has ever run.
+      - name: Generate Next.js types
+        run: npx next typegen
       - name: Typecheck
         run: npx tsc --noEmit
 
