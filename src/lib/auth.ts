@@ -20,6 +20,7 @@ import { DrizzleAdapter } from "@auth/drizzle-adapter";
 import { and, eq, ne } from "drizzle-orm";
 import { getDb, isDbEnabled } from "@/lib/db/client";
 import { accounts, sessions, users, verificationTokens } from "@/lib/db/schema";
+import { isReservedHandle } from "@/lib/reserved";
 
 export type ProviderId = "github" | "google";
 
@@ -56,31 +57,35 @@ function slugifyHandle(raw: string): string {
 }
 
 /**
- * Derive a unique handle for a Google user from their email local-part. In DB mode,
- * appends -2, -3, ... on collision with a different user's existing handle.
+ * Derive a unique handle from a raw base string (a GitHub login, or the local-part of a
+ * Google email). Slugified first; appends -2, -3, ... when the result is reserved
+ * (B12a — blocklist + seed catalog owners) or already taken by a *different* user. In
+ * JWT-only mode (no `db`) there is nowhere durable to check collisions against other
+ * users, so only the reserved-word check applies.
  */
-async function deriveGoogleHandle(
-  email: string,
+async function uniqueHandle(
+  base: string,
   userId: string | undefined,
   db: ReturnType<typeof getDb>
 ): Promise<string> {
-  const localPart = email.split("@")[0] ?? email;
-  const base = slugifyHandle(localPart) || "user";
+  const slug = slugifyHandle(base) || "user";
 
-  if (!db) return base;
-
-  let candidate = base;
+  let candidate = slug;
   let suffix = 2;
   // Cap the length so the `-N` suffix never pushes past 39 chars.
   const maxBaseLen = 39;
   while (true) {
-    const where = userId
-      ? and(eq(users.handle, candidate), ne(users.id, userId))
-      : eq(users.handle, candidate);
-    const [collision] = await db.select({ id: users.id }).from(users).where(where).limit(1);
-    if (!collision) return candidate;
+    let taken = isReservedHandle(candidate);
+    if (!taken && db) {
+      const where = userId
+        ? and(eq(users.handle, candidate), ne(users.id, userId))
+        : eq(users.handle, candidate);
+      const [collision] = await db.select({ id: users.id }).from(users).where(where).limit(1);
+      taken = Boolean(collision);
+    }
+    if (!taken) return candidate;
     const suffixStr = `-${suffix}`;
-    candidate = `${base.slice(0, maxBaseLen - suffixStr.length)}${suffixStr}`;
+    candidate = `${slug.slice(0, maxBaseLen - suffixStr.length)}${suffixStr}`;
     suffix += 1;
   }
 }
@@ -144,25 +149,38 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   ],
   // Persist a provider-derived handle on the DB user record so it survives across
   // sessions/devices and can be used for owner checks in publish.ts.
-  // GitHub -> the GitHub login (lowercased). Google -> slugified email local-part, deduped.
+  // GitHub -> the GitHub login. Google -> slugified email local-part, deduped.
   // This lives in `events.signIn` rather than `callbacks.signIn` because, with a database
   // adapter, the callback runs BEFORE a first-time user row exists (user.id is still the
   // provider's id there), so an update from the callback matches nothing.
   events: {
     async signIn({ user, account, profile }) {
       if (!dbEnabled || !db || !profile || !user.id) return;
+
+      // B12b: a handle is set once, on first sign-in, and never rewritten after that. A
+      // renamed GitHub login (or a Google account whose email local-part changed) would
+      // otherwise silently orphan every package published under the old handle — owner
+      // checks in publish.ts and `/u/<handle>` both key off this column, not off a stable
+      // internal id. Self-service handle change (with a migration of `packages.owner` to
+      // match) is future work; until then the first handle sticks.
+      const [existingRow] = await db
+        .select({ handle: users.handle })
+        .from(users)
+        .where(eq(users.id, user.id))
+        .limit(1);
+      if (existingRow?.handle) return;
+
+      let base: string | undefined;
       if (account?.provider === "github") {
-        const login = (profile as { login?: string }).login;
-        if (login) {
-          await db.update(users).set({ handle: login.toLowerCase() }).where(eq(users.id, user.id));
-        }
+        base = (profile as { login?: string }).login;
       } else if (account?.provider === "google") {
         const email = (profile as { email?: string }).email;
-        if (email) {
-          const handle = await deriveGoogleHandle(email, user.id, db);
-          await db.update(users).set({ handle }).where(eq(users.id, user.id));
-        }
+        base = email ? (email.split("@")[0] ?? email) : undefined;
       }
+      if (!base) return;
+
+      const handle = await uniqueHandle(base, user.id, db);
+      await db.update(users).set({ handle }).where(eq(users.id, user.id));
     },
   },
   callbacks: {
@@ -170,10 +188,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     async jwt({ token, profile, account }) {
       if (account?.provider === "github" && profile) {
         const login = (profile as { login?: string }).login;
-        if (login) token.handle = login.toLowerCase();
+        if (login) token.handle = await uniqueHandle(login, undefined, null);
       } else if (account?.provider === "google" && profile) {
         const email = (profile as { email?: string }).email;
-        if (email) token.handle = await deriveGoogleHandle(email, undefined, null);
+        if (email) token.handle = await uniqueHandle(email.split("@")[0] ?? email, undefined, null);
       }
       return token;
     },

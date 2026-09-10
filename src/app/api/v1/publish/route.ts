@@ -1,8 +1,11 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { isDbEnabled } from "@/lib/db/client";
+import { error, json, preflight } from "@/lib/api";
 import { publishPackage, PublishError } from "@/lib/publish";
+
+export const runtime = "nodejs";
 
 const bodySchema = z.object({
   files: z.array(
@@ -11,22 +14,25 @@ const bodySchema = z.object({
       content: z.string(),
     })
   ),
+  // Optional "what changed in this version" note; publishPackage falls back to
+  // CHANGELOG.md's first section when this is absent (B6d).
+  changelog: z.string().optional(),
 });
 
 export async function POST(req: NextRequest) {
   if (!isDbEnabled()) {
-    return NextResponse.json({ error: "database not configured" }, { status: 503 });
+    return error(503, "database not configured");
   }
 
   const session = await auth();
   if (!session?.user?.handle) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    return error(401, "unauthorized");
   }
 
-  const json = await req.json().catch(() => null);
-  const parsed = bodySchema.safeParse(json);
+  const body = await req.json().catch(() => null);
+  const parsed = bodySchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json(
+    return json(
       { error: "invalid body", issues: parsed.error.issues.map((i) => i.message) },
       { status: 400 }
     );
@@ -36,12 +42,17 @@ export async function POST(req: NextRequest) {
     const result = await publishPackage({
       userHandle: session.user.handle,
       files: parsed.data.files,
+      changelog: parsed.data.changelog,
     });
-    return NextResponse.json(result, { status: 201 });
+    return json(result, { status: 201 });
   } catch (err) {
     if (err instanceof PublishError) {
-      return NextResponse.json({ error: err.message, issues: err.errors }, { status: err.status });
+      return json({ error: err.message, issues: err.errors }, { status: err.status });
     }
-    return NextResponse.json({ error: "publish failed" }, { status: 500 });
+    return error(500, "publish failed");
   }
+}
+
+export async function OPTIONS() {
+  return preflight();
 }
