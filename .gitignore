@@ -60,3 +60,6 @@ skills-lock.json
 # temporary env pulls (e.g. `vercel env pull` for one-off smoke tests) — already covered
 # by `.env*` above, listed explicitly for clarity
 .env*.tmp
+
+# Keep the documented template even though real env files are ignored above.
+!.env.example
