@@ -54,38 +54,31 @@ interface RecordPaidPurchaseArgs {
   stripeSessionId: string;
   stripePaymentIntent?: string | null;
   amountCents: number;
+  /** ISO 4217 lowercase, as charged (Stripe reports it on the session). */
+  currency?: string | null;
 }
 
 /**
  * Idempotently records a completed purchase. A given Stripe Checkout Session can be
  * reported to us more than once — `checkout.session.completed` redelivering, and the
  * package-page success-banner fallback (`confirmCheckoutSession` below) racing the
- * webhook — so this checks for an existing row by `stripeSessionId` before inserting.
- *
- * NEEDS CHANGE ELSEWHERE: `purchases.stripeSessionId` has no DB-level unique
- * constraint (src/lib/db/schema.ts is outside this workstream's owned files — see the
- * payments-workstream report), so this is a check-then-insert rather than a real
- * `onConflictDoNothing`. That's good enough for Stripe's actual redelivery pattern
- * (retries are not concurrent with each other) but isn't race-proof. Once
- * `purchases_stripe_session_unique` exists, replace the select+insert below with
- * `db.insert(purchases).values(...).onConflictDoNothing({ target: purchases.stripeSessionId })`.
+ * webhook — so the insert leans on the `purchases_stripe_session_unique` constraint:
+ * a second report of the same session is a no-op at the database, which stays
+ * correct even when the two reports arrive concurrently.
  */
 export async function recordPaidPurchase(db: Db, args: RecordPaidPurchaseArgs): Promise<void> {
-  const [existing] = await db
-    .select({ id: purchases.id })
-    .from(purchases)
-    .where(eq(purchases.stripeSessionId, args.stripeSessionId))
-    .limit(1);
-  if (existing) return;
-
-  await db.insert(purchases).values({
-    userId: args.userId,
-    packageId: args.packageId,
-    stripeSessionId: args.stripeSessionId,
-    stripePaymentIntent: args.stripePaymentIntent ?? undefined,
-    amountCents: args.amountCents,
-    status: "paid",
-  });
+  await db
+    .insert(purchases)
+    .values({
+      userId: args.userId,
+      packageId: args.packageId,
+      stripeSessionId: args.stripeSessionId,
+      stripePaymentIntent: args.stripePaymentIntent ?? undefined,
+      amountCents: args.amountCents,
+      currency: args.currency ?? undefined,
+      status: "paid",
+    })
+    .onConflictDoNothing({ target: purchases.stripeSessionId });
 }
 
 /** Marks the purchase for `stripeSessionId` as `failed` (used for
@@ -148,6 +141,7 @@ export async function confirmCheckoutSession(
       stripeSessionId: checkoutSession.id,
       stripePaymentIntent: typeof paymentIntent === "string" ? paymentIntent : paymentIntent?.id,
       amountCents: checkoutSession.amount_total ?? 0,
+      currency: checkoutSession.currency,
     });
     return { ok: true };
   } catch {

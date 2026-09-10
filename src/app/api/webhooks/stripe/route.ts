@@ -90,6 +90,7 @@ export async function POST(req: NextRequest) {
             stripeSessionId: checkoutSession.id,
             stripePaymentIntent: paymentIntentId(checkoutSession.payment_intent),
             amountCents: checkoutSession.amount_total ?? 0,
+            currency: checkoutSession.currency,
           });
         } catch {
           // DB write failed — ask Stripe to retry rather than silently dropping a sale.

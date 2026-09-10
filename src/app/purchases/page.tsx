@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import type { Metadata } from "next";
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { getDb, isDbEnabled } from "@/lib/db/client";
 import { packages, purchases } from "@/lib/db/schema";
@@ -58,10 +58,9 @@ async function PurchasesTable({
       name: packages.name,
       title: packages.title,
       amountCents: purchases.amountCents,
-      // `purchases.currency` doesn't exist in the schema yet (see the payments-
-      // workstream report's "Needs change elsewhere") — fall back to the package's
-      // current currency, which is what every existing row was actually charged in.
-      currency: packages.currency,
+      // Rows written before the column existed carry no currency of their own; the
+      // package's current currency is what those were charged in.
+      currency: sql<string>`coalesce(${purchases.currency}, ${packages.currency})`,
       status: purchases.status,
       createdAt: purchases.createdAt,
     })

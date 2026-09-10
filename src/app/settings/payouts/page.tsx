@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { getDb, isDbEnabled } from "@/lib/db/client";
 import { getConnectedAccountStatus, isStripeEnabled, PLATFORM_FEE_BPS } from "@/lib/stripe";
@@ -26,8 +26,6 @@ interface SaleRow {
   name: string;
   title: string;
   amountCents: number;
-  // `purchases.currency` doesn't exist in the schema yet (see the payments-workstream
-  // report's "Needs change elsewhere") — fall back to the package's current currency.
   currency: string;
   status: string;
   createdAt: Date;
@@ -100,7 +98,9 @@ export default async function PayoutsPage({ searchParams }: PayoutsPageProps) {
         name: packages.name,
         title: packages.title,
         amountCents: purchases.amountCents,
-        currency: packages.currency,
+        // Rows written before the column existed carry no currency of their own; the
+        // package's current currency is what those were charged in.
+        currency: sql<string>`coalesce(${purchases.currency}, ${packages.currency})`,
         status: purchases.status,
         createdAt: purchases.createdAt,
       })
