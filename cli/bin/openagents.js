@@ -22,14 +22,22 @@ Usage:
                   [--tags <a,b,c>] [--runtimes <a,b,c>] [--license <spdx>]
                   [--version <semver>] [--force]
   openagents validate [dir]
-  openagents publish
+  openagents login [--token <oa_...>] [--registry <url>]
+  openagents logout [--registry <url>]
+  openagents whoami [--registry <url>] [--json]
+  openagents publish [dir] [--changelog <text>] [--dry-run] [--json] [--registry <url>]
+  openagents publish --from-github <url> [--ref <ref>] [--subdir <path>]
+                      [--changelog <text>] [--dry-run] [--json] [--registry <url>]
 
 Options:
   -h, --help       Show this help
   -v, --version    Show the CLI version
 
 Environment:
-  OPENAGENTS_REGISTRY   Default registry URL (default: https://openagents-nu.vercel.app)
+  OPENAGENTS_REGISTRY     Default registry URL (default: https://openagents-nu.vercel.app)
+  OPENAGENTS_TOKEN        Auth token, overrides the one saved by "login"
+  OPENAGENTS_CONFIG_DIR   Where "login" saves its token (default: ~/.config/openagents,
+                          %APPDATA%\\openagents on Windows)
 
 Runtimes: claude-code, cursor, codex, openai-agents, langgraph, generic
 
@@ -42,6 +50,8 @@ Examples:
   openagents remove openagents/pr-reviewer
   openagents init --kind workflow --name my-workflow
   openagents validate ./catalog/openagents/pr-reviewer
+  openagents login
+  openagents publish ./catalog/openagents/pr-reviewer --dry-run
 `;
 
 /** Options each command accepts, for unknown-flag detection ("did you mean"). Booleans included. */
@@ -65,7 +75,10 @@ const KNOWN_OPTIONS = {
     "force",
   ],
   validate: [],
-  publish: ["registry"],
+  login: ["token", "registry"],
+  logout: ["registry"],
+  whoami: ["registry", "json"],
+  publish: ["registry", "changelog", "dry-run", "json", "from-github", "ref", "subdir"],
 };
 
 /** Minimal argv parser: positional args land in `_`, `--flag value` and `--flag=value` land as named. */
@@ -217,9 +230,24 @@ async function main() {
       run(args);
       break;
     }
+    case "login": {
+      const { run } = await import("../lib/commands/login.js");
+      await run(args);
+      break;
+    }
+    case "logout": {
+      const { run } = await import("../lib/commands/logout.js");
+      run(args);
+      break;
+    }
+    case "whoami": {
+      const { run } = await import("../lib/commands/whoami.js");
+      await run(args);
+      break;
+    }
     case "publish": {
       const { run } = await import("../lib/commands/publish.js");
-      run(args);
+      await run(args);
       break;
     }
   }

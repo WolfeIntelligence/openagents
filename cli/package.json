@@ -1,6 +1,6 @@
 {
   "name": "openagents",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "CLI for the OpenAgents marketplace: install, search, and publish agentic workflows, harnesses, rules, and skills.",
   "type": "module",
   "license": "MIT",
