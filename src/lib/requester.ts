@@ -8,6 +8,7 @@
 import type { NextRequest } from "next/server";
 import type { Session } from "next-auth";
 import { auth } from "@/lib/auth";
+import { TOKEN_SCOPES, verifyToken, type TokenScope } from "@/lib/tokens";
 
 export interface Requester {
   /** Stable user id (users.id). */
@@ -21,9 +22,11 @@ export interface Requester {
   scopes: string[];
 }
 
-/** Bearer token scopes. A session implicitly has all of them. */
-export const TOKEN_SCOPES = ["read", "publish", "star", "download"] as const;
-export type TokenScope = (typeof TOKEN_SCOPES)[number];
+// Re-exported for callers that only need the scope vocabulary and would otherwise have
+// to know tokens.ts owns it (kept here since this is the module route handlers import
+// for auth/scope checks).
+export { TOKEN_SCOPES };
+export type { TokenScope };
 
 function fromSession(session: Session | null): Requester | null {
   if (!session?.user?.id) return null;
@@ -38,12 +41,22 @@ function fromSession(session: Session | null): Requester | null {
 }
 
 /**
- * Resolves the caller from a bearer token. Implemented by the API-tokens
- * workstream in `src/lib/tokens.ts`; until then every bearer token is rejected,
- * which is the safe default.
+ * Resolves the caller from a bearer token (`Authorization: Bearer oa_...`). Delegates
+ * the actual lookup/hashing/lastUsedAt bookkeeping to `src/lib/tokens.ts`; this just
+ * shapes the result into a `Requester`. Invalid, unknown, revoked, or malformed tokens
+ * — and zero-env deployments — all resolve to null, the same "unauthenticated" outcome.
  */
-export async function requesterFromBearer(_token: string): Promise<Requester | null> {
-  return null;
+export async function requesterFromBearer(token: string): Promise<Requester | null> {
+  const principal = await verifyToken(token);
+  if (!principal) return null;
+  return {
+    id: principal.user.id,
+    handle: principal.user.handle ?? undefined,
+    name: principal.user.name,
+    image: principal.user.image,
+    via: "token",
+    scopes: principal.scopes,
+  };
 }
 
 /**

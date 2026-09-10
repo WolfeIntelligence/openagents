@@ -28,6 +28,8 @@ export interface PublishResult {
   version: string;
   /** Path to the published package's page. */
   url: string;
+  /** The package's lifecycle status after this publish (see `packages.status`). */
+  status: string;
 }
 
 /** Thrown for any publish failure; `status` is the HTTP status the route should return. */
@@ -243,7 +245,7 @@ export async function publishPackage({ userHandle, files, changelog }: PublishAr
 
   // neon-http has no transactions; these run sequentially and are accepted as such.
   const [existing] = await db
-    .select({ id: packages.id, latestVersion: packages.latestVersion })
+    .select({ id: packages.id, latestVersion: packages.latestVersion, status: packages.status })
     .from(packages)
     .where(and(eq(packages.owner, manifest.owner), eq(packages.name, manifest.name)))
     .limit(1);
@@ -277,18 +279,28 @@ export async function publishPackage({ userHandle, files, changelog }: PublishAr
   }
 
   let packageId: string;
+  let resultStatus: string;
   if (existing) {
+    // Updates never touch status: a re-publish of an already-live (or already-pending,
+    // already-unlisted...) package shouldn't silently change its moderation state —
+    // only the review queue (or REQUIRE_REVIEW at initial creation) does that.
     packageId = existing.id;
+    resultStatus = existing.status;
     await db
       .update(packages)
       .set({ ...packageValues, updatedAt: new Date() })
       .where(eq(packages.id, packageId));
   } else {
+    // G-T1/S9 follow-on: when review is required, a brand-new package starts hidden
+    // from listings/search until an admin approves it (see `packages.status` doc
+    // comment in schema.ts) rather than going live immediately.
+    const initialStatus = process.env.REQUIRE_REVIEW === "1" ? "pending" : "live";
     const [row] = await db
       .insert(packages)
-      .values({ owner: manifest.owner, name: manifest.name, ...packageValues })
-      .returning({ id: packages.id });
+      .values({ owner: manifest.owner, name: manifest.name, ...packageValues, status: initialStatus })
+      .returning({ id: packages.id, status: packages.status });
     packageId = row.id;
+    resultStatus = row.status;
   }
 
   let versionRow: { id: string };
@@ -330,5 +342,6 @@ export async function publishPackage({ userHandle, files, changelog }: PublishAr
     id: `${manifest.owner}/${manifest.name}`,
     version: manifest.version,
     url: `/p/${manifest.owner}/${manifest.name}`,
+    status: resultStatus,
   };
 }
