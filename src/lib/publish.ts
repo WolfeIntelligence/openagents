@@ -181,8 +181,10 @@ export async function publishPackage({ userHandle, files, changelog }: PublishAr
     throw new PublishError(403, ["owner handle is reserved"]);
   }
 
-  if (manifest.pricing.model === "subscription") {
-    throw new PublishError(400, ["subscription pricing is not available yet; use one-time"]);
+  if (manifest.pricing.model === "subscription" && !manifest.pricing.interval) {
+    throw new PublishError(400, [
+      'subscription pricing needs pricing.interval ("month" or "year")',
+    ]);
   }
 
   if (!/^[a-z]{3}$/.test(manifest.pricing.currency)) {
