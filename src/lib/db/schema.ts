@@ -109,17 +109,23 @@ export const packages = pgTable(
   (t) => [unique("packages_owner_name_unique").on(t.owner, t.name)]
 );
 
-export const packageVersions = pgTable("package_versions", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  packageId: uuid("packageId")
-    .notNull()
-    .references(() => packages.id, { onDelete: "cascade" }),
-  version: text("version").notNull(),
-  manifest: jsonb("manifest").notNull(),
-  readme: text("readme").notNull().default(""),
-  changelog: text("changelog"),
-  publishedAt: timestamp("publishedAt", { mode: "date" }).notNull().defaultNow(),
-});
+export const packageVersions = pgTable(
+  "package_versions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    packageId: uuid("packageId")
+      .notNull()
+      .references(() => packages.id, { onDelete: "cascade" }),
+    version: text("version").notNull(),
+    manifest: jsonb("manifest").notNull(),
+    readme: text("readme").notNull().default(""),
+    changelog: text("changelog"),
+    publishedAt: timestamp("publishedAt", { mode: "date" }).notNull().defaultNow(),
+  },
+  // A version is immutable once published: the same version string can never be
+  // inserted twice for one package (publishing enforces semver ordering on top).
+  (t) => [unique("package_versions_package_version_unique").on(t.packageId, t.version)]
+);
 
 export const packageFiles = pgTable("package_files", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -131,20 +137,29 @@ export const packageFiles = pgTable("package_files", {
   content: text("content").notNull(),
 });
 
-export const purchases = pgTable("purchases", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  userId: text("userId")
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-  packageId: uuid("packageId")
-    .notNull()
-    .references(() => packages.id, { onDelete: "cascade" }),
-  stripeSessionId: text("stripeSessionId"),
-  stripePaymentIntent: text("stripePaymentIntent"),
-  amountCents: integer("amountCents").notNull(),
-  status: text("status").notNull().default("pending"), // pending | paid | failed | refunded
-  createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
-});
+export const purchases = pgTable(
+  "purchases",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    packageId: uuid("packageId")
+      .notNull()
+      .references(() => packages.id, { onDelete: "cascade" }),
+    stripeSessionId: text("stripeSessionId"),
+    stripePaymentIntent: text("stripePaymentIntent"),
+    amountCents: integer("amountCents").notNull(),
+    // ISO 4217 lowercase, as charged. Nullable only for rows written before the
+    // column existed; readers fall back to the package's current currency.
+    currency: text("currency"),
+    status: text("status").notNull().default("pending"), // pending | paid | failed | refunded
+    createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
+  },
+  // One purchase row per Stripe Checkout Session: webhook redeliveries and the
+  // success-page fallback both upsert against this rather than inserting twice.
+  (t) => [unique("purchases_stripe_session_unique").on(t.stripeSessionId)]
+);
 
 // ---------------------------------------------------------------------------
 // Real usage counters
