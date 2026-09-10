@@ -8,7 +8,8 @@ import { CopyButton } from "@/components/CopyButton";
 import { EmptyState } from "@/components/EmptyState";
 import { isStripeEnabled, PLATFORM_FEE_BPS } from "@/lib/stripe";
 
-const INSTALL_SNIPPET = "npx openagents add openagents/pr-reviewer";
+import { cliSpec } from "@/lib/site";
+import { installCommand } from "@/lib/runtimes";
 
 const STEPS = [
   {
@@ -44,6 +45,7 @@ export default async function HomePage() {
   ]);
   const counts = Object.fromEntries(kindCounts);
   const paymentsLive = isStripeEnabled();
+  const installSnippet = installCommand("openagents", "pr-reviewer", undefined, cliSpec());
   const topTags = tags.slice(0, 12);
   // `stats.trending` is only ever set by a real `sort=trending` DB query
   // (see catalog/db.ts's sortByTrending); filtering on it — rather than
@@ -70,9 +72,9 @@ export default async function HomePage() {
 
           <div className="mx-auto mt-6 flex max-w-xl items-center justify-between gap-3 rounded-lg border border-border bg-surface px-4 py-3">
             <code className="overflow-x-auto whitespace-pre font-mono text-sm text-fg">
-              {INSTALL_SNIPPET}
+              {installSnippet}
             </code>
-            <CopyButton value={INSTALL_SNIPPET} />
+            <CopyButton value={installSnippet} />
           </div>
         </div>
       </section>

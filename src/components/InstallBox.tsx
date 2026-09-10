@@ -9,14 +9,17 @@ export function InstallBox({
   owner,
   name,
   runtimes,
+  cli,
 }: {
   owner: string;
   name: string;
   runtimes: RuntimeId[];
+  /** npx package spec for the CLI (see `cliSpec()`); defaults to the npm name. */
+  cli?: string;
 }) {
   const tabs = runtimes.length > 0 ? runtimes : (["generic"] as RuntimeId[]);
   const [active, setActive] = useState<RuntimeId>(tabs[0]);
-  const command = installCommand(owner, name, active);
+  const command = installCommand(owner, name, active, cli);
 
   return (
     <div className="overflow-hidden rounded-lg border border-border">

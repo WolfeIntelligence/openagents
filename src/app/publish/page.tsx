@@ -5,6 +5,7 @@ import { isDbEnabled } from "@/lib/db/client";
 import { isStripeEnabled, PLATFORM_FEE_BPS } from "@/lib/stripe";
 import { PublishForm } from "@/components/PublishForm";
 import { CopyButton } from "@/components/CopyButton";
+import { cliSpec } from "@/lib/site";
 
 export const metadata: Metadata = {
   title: "Publish",
@@ -81,8 +82,8 @@ export default async function PublishPage() {
             Run this from inside your package directory once your manifest and files are ready.
           </p>
           <div className="mt-3 flex items-center justify-between gap-2 rounded-md border border-border bg-bg-elevated px-3 py-2">
-            <code className="font-mono text-sm text-fg">npx openagents publish</code>
-            <CopyButton value="npx openagents publish" />
+            <code className="font-mono text-sm text-fg">npx {cliSpec()} publish</code>
+            <CopyButton value={`npx ${cliSpec()} publish`} />
           </div>
           <p className="mt-2 text-xs text-fg-subtle">Coming soon.</p>
         </section>

@@ -64,3 +64,6 @@ skills-lock.json
 
 # Keep the documented template even though real env files are ignored above.
 !.env.example
+
+# CLI tarball generated at build time by scripts/pack-cli.mjs
+public/cli/
