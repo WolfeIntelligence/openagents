@@ -3,38 +3,31 @@ import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import * as tar from "tar";
-import {
-  registryUrl,
-  splitPackageRef,
-  fetchJson,
-  existsSync,
-  responseError,
-  formatPrice,
-  userAgent,
-} from "../util.js";
+import * as util from "../util.js";
 import { installDir, detectRuntime, RUNTIME_IDS } from "../runtimes.js";
 import { buildShims, nextStepHint } from "../shims.js";
 import { readLockfile, recordInstall } from "../lockfile.js";
+import { buildPlan, formatPlan } from "../resolve.js";
+import { sha256Hex, toIntegrityString, parseIntegrityString, expectedChecksumFromHeaders, verifyChecksum } from "../integrity.js";
 
 export async function run(args) {
   const ref = args._[0];
   if (!ref) {
-    console.error("✗ usage: openagents add <owner/name[@version]> [--runtime <id>] [--registry <url>] [--dir <path>]");
+    console.error("✗ usage: openagents add <owner/name[@version|@range]> [--runtime <id>] [--registry <url>] [--dir <path>] [--no-deps]");
     process.exitCode = 1;
     return;
   }
 
   let owner, name, version;
   try {
-    ({ owner, name, version } = splitPackageRef(ref));
+    ({ owner, name, version } = util.splitPackageRef(ref));
   } catch (err) {
     console.error(`✗ ${err.message}`);
     process.exitCode = 1;
     return;
   }
 
-  const registry = registryUrl(args.registry);
+  const registry = util.registryUrl(args.registry);
   const projectDir = path.resolve(args.dir || ".");
 
   let runtime = args.runtime;
@@ -44,72 +37,121 @@ export async function run(args) {
     return;
   }
   if (!runtime) {
-    runtime = detectRuntime(projectDir, existsSync);
+    runtime = detectRuntime(projectDir, util.existsSync);
   }
 
-  console.log(`Fetching ${owner}/${name} from ${registry} ...`);
-  let pkg;
+  const noDeps = Boolean(args["no-deps"] ?? args.noDeps);
+
+  let plan;
   try {
-    pkg = await fetchJson(`${registry}/api/v1/packages/${owner}/${name}`, { runtime });
+    plan = await buildPlan({ owner, name, range: version, registry, runtime, projectDir, noDeps });
   } catch (err) {
-    console.error(`✗ could not fetch package manifest: ${err.message}`);
+    console.error(`✗ ${err.message}`);
     process.exitCode = 1;
     return;
   }
 
-  const manifest = pkg.manifest || pkg;
+  console.log(`\nResolved ${plan.length} package${plan.length === 1 ? "" : "s"} to install:`);
+  console.log(formatPlan(plan));
+  console.log("");
 
-  // @version selectors (G6): the registry has no versioned download yet, so
-  // pinning to anything but the current latest is a hard error for `add`.
-  if (version && version !== manifest.version) {
-    console.error(`✗ version pinning isn't supported by this registry yet; latest is ${manifest.version}`);
-    process.exitCode = 1;
-    return;
+  for (const entry of plan) {
+    if (entry.cached) continue;
+    const [pOwner, pName] = entry.id.split("/");
+    const ok = await installPackage({
+      owner: pOwner,
+      name: pName,
+      version: entry.version,
+      manifest: entry.manifest,
+      downloadUrl: entry.downloadUrl,
+      registry,
+      runtime,
+      projectDir,
+      requestedRange: entry.requestedRange,
+    });
+    if (!ok) {
+      process.exitCode = 1;
+      return;
+    }
   }
+}
 
+/**
+ * Download, verify, extract, shim, and record a single resolved package.
+ * Shared by `add` (for the root package and every resolved dependency) and
+ * `update`. Returns `true` on success, `false` on a handled failure
+ * (already reported to the console).
+ *
+ * `extract(buf, tmpDir)` is injectable for tests that can't rely on the
+ * `tar` package being installed; it defaults to real tarball extraction.
+ */
+export async function installPackage({ owner, name, version, manifest, downloadUrl, registry, runtime, projectDir, requestedRange, extract = defaultExtract }) {
+  const id = `${owner}/${name}`;
   const destRelative = installDir(runtime, name);
   const destDir = path.join(projectDir, destRelative);
   const destRelativeSlash = destRelative.split(path.sep).join("/");
 
   const lock = readLockfile(projectDir);
-  const prior = lock.packages[`${owner}/${name}`];
+  const prior = lock.packages[id];
   if (prior) {
-    if (prior.version && prior.version !== manifest.version) {
-      console.log(`updating ${owner}/${name} ${prior.version} → ${manifest.version}`);
+    if (prior.version && prior.version !== version) {
+      console.log(`updating ${id} ${prior.version} → ${version}`);
     } else {
-      console.log(`already at ${manifest.version}, reinstalling ${owner}/${name}`);
+      console.log(`already at ${version}, reinstalling ${id}`);
     }
   }
 
-  const downloadUrl = new URL(pkg.downloadUrl || `${registry}/api/v1/packages/${owner}/${name}/download`);
-  downloadUrl.searchParams.set("runtime", runtime);
+  const url = downloadUrl || `${registry}/api/v1/packages/${owner}/${name}/download`;
+  console.log(`Downloading ${id}@${version || "?"} ...`);
 
-  console.log(`Downloading ${owner}/${name}@${manifest.version || "?"} ...`);
+  // Built defensively so this works whether or not `util.js` has picked up
+  // `userAgentHeaders`/`authHeaders` yet (another workstream is adding
+  // `authHeaders` there for paid-package downloads).
+  const uaHeaders = typeof util.userAgentHeaders === "function" ? util.userAgentHeaders(runtime) : { "User-Agent": util.userAgent(runtime) };
+  const headers = { ...uaHeaders, ...(typeof util.authHeaders === "function" ? util.authHeaders(registry) : {}) };
+
   let res;
   try {
-    res = await fetch(downloadUrl, { headers: { "User-Agent": userAgent(runtime) } });
+    res = await fetch(url, { headers });
   } catch (err) {
-    console.error(`✗ could not download package: ${err.message}`);
-    process.exitCode = 1;
-    return;
+    console.error(`✗ could not download ${id}: ${err.message}`);
+    return false;
   }
   if (!res.ok || !res.body) {
     if (res.status === 402) {
-      const price = formatPrice(manifest.pricing?.amountCents, manifest.pricing?.currency);
-      console.error(
-        `✗ ${owner}/${name} is a paid package (${price}). Buy it at ${registry}/p/${owner}/${name} — installing purchased packages from the CLI requires signing in, which isn't available yet.`
-      );
+      const price = util.formatPrice(manifest?.pricing?.amountCents, manifest?.pricing?.currency);
+      console.error(`✗ ${id} is a paid package (${price}). Buy it at ${registry}/p/${owner}/${name}.`);
     } else {
-      const err = await responseError(downloadUrl.toString(), res, "GET");
-      console.error(`✗ download failed: ${err.message}`);
+      const err = await util.responseError(url, res, "GET");
+      console.error(`✗ download failed for ${id}: ${err.message}`);
     }
-    process.exitCode = 1;
-    return;
+    return false;
+  }
+
+  const buf = Buffer.from(await res.arrayBuffer());
+  const actualHex = sha256Hex(buf);
+  const expectedHex = expectedChecksumFromHeaders(res.headers);
+  try {
+    verifyChecksum(actualHex, expectedHex, { label: `${id}@${version}` });
+  } catch (err) {
+    console.error(`✗ ${err.message}`);
+    return false;
+  }
+
+  if (prior && prior.version === version && prior.integrity) {
+    const priorHex = parseIntegrityString(prior.integrity);
+    if (priorHex && priorHex !== actualHex) {
+      console.error(
+        `✗ integrity mismatch for ${id}@${version}: previously recorded ${prior.integrity}, freshly downloaded sha256-${actualHex}. ` +
+          `The registry may have changed this version's contents; refusing to reinstall.`
+      );
+      return false;
+    }
   }
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "openagents-"));
   try {
-    await pipeline(Readable.fromWeb(res.body), tar.x({ cwd: tmpDir }));
+    await extract(buf, tmpDir);
 
     // Some registries wrap package files in a single top-level directory
     // (e.g. "<name>/openagent.yaml"); flatten that if present so the install
@@ -123,9 +165,8 @@ export async function run(args) {
     fs.mkdirSync(destDir, { recursive: true });
     copyDirRecursive(sourceDir, destDir);
   } catch (err) {
-    console.error(`✗ could not extract package: ${err.message}`);
-    process.exitCode = 1;
-    return;
+    console.error(`✗ could not extract ${id}: ${err.message}`);
+    return false;
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
@@ -133,9 +174,9 @@ export async function run(args) {
   const shimManifest = { ...manifest, owner, name };
   const shimNote = applyRuntimeShims({ manifest: shimManifest, runtime, destDir, projectDir });
 
-  console.log(`\n✓ installed ${owner}/${name}@${manifest.version || "?"} for runtime "${runtime}"`);
+  console.log(`\n✓ installed ${id}@${version || "?"} for runtime "${runtime}"`);
   console.log(`  location: ${path.relative(process.cwd(), destDir) || "."}`);
-  if (manifest.entry) {
+  if (manifest?.entry) {
     console.log(`  entry:    ${path.relative(process.cwd(), path.join(destDir, manifest.entry)).split(path.sep).join("/")}`);
   }
   if (shimNote) {
@@ -143,14 +184,22 @@ export async function run(args) {
   }
   console.log(`  ${nextStepHint(shimManifest, runtime, destRelativeSlash)}`);
 
-  recordInstall(projectDir, `${owner}/${name}`, {
-    version: manifest.version,
-    kind: manifest.kind,
+  recordInstall(projectDir, id, {
+    version,
+    kind: manifest?.kind,
     runtime,
     path: destRelativeSlash,
     installedAt: new Date().toISOString(),
     registry,
+    integrity: toIntegrityString(actualHex),
+    requestedRange: requestedRange || undefined,
   });
+  return true;
+}
+
+async function defaultExtract(buf, tmpDir) {
+  const tar = await import("tar");
+  await pipeline(Readable.from(buf), tar.x({ cwd: tmpDir }));
 }
 
 /**
@@ -167,17 +216,17 @@ function applyRuntimeShims({ manifest, runtime, destDir, projectDir }) {
   const opts = {};
   if (manifest.entry === "SKILL.md") {
     const entryPath = path.join(destDir, "SKILL.md");
-    if (existsSync(entryPath)) {
+    if (util.existsSync(entryPath)) {
       opts.entryContent = fs.readFileSync(entryPath, "utf8");
     }
   } else if (runtime === "claude-code" || runtime === "codex") {
     const skillPath = path.join(destDir, "SKILL.md");
-    if (existsSync(skillPath)) {
+    if (util.existsSync(skillPath)) {
       opts.existingShimContent = fs.readFileSync(skillPath, "utf8");
     }
   } else if (runtime === "cursor") {
     const mdcPath = path.join(projectDir, ".cursor", "rules", `${manifest.name}.mdc`);
-    if (existsSync(mdcPath)) {
+    if (util.existsSync(mdcPath)) {
       opts.existingShimContent = fs.readFileSync(mdcPath, "utf8");
     }
   }
