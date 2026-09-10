@@ -171,11 +171,90 @@ as a nested mapping) with a clear error instead of silently mangling them —
 `cli/test/yaml.test.js` checks it agrees with the real `yaml` package on
 every seed manifest plus a battery of edge cases.
 
-### `openagents publish`
+### `openagents login`
 
-Publishing from the CLI is coming soon. For now it prints where to go: sign in
-at `<registry>/publish` for the hosted flow, `POST /api/v1/publish`, or open a
-PR adding a free package under `catalog/<owner>/<name>/`.
+```bash
+openagents login                          # prints where to get a token, then prompts (echo off)
+openagents login --token oa_xxxxxxxxxxxx  # non-interactive
+echo "$TOKEN" | openagents login          # piped, e.g. from a secrets manager
+```
+
+Tokens are personal access tokens, created on the site at
+`<registry>/settings/tokens` — the CLI can't mint one itself (minting is a
+session-only endpoint), only accept one you've already created. `login`
+verifies the token against `GET /api/v1/me` before storing it, then prints:
+
+```
+✓ logged in as @zach (scopes: publish, download)
+```
+
+An invalid or revoked token fails cleanly with the server's error message
+(no partial/garbage state is written).
+
+### `openagents logout`
+
+```bash
+openagents logout
+```
+
+Removes the stored token for the target registry (`--registry`). Safe to run
+when nothing is stored — prints `not logged in to <registry>` instead of
+erroring.
+
+### `openagents whoami`
+
+```bash
+openagents whoami
+openagents whoami --json
+```
+
+Prints the identity, sign-in provider (`via`), and scopes for the token
+stored for the current (or `--registry`) registry, by calling
+`GET /api/v1/me`. Fails with exit 1 and a hint to run `openagents login` if
+nothing is stored, or with the server's message if the stored token was
+revoked (401).
+
+### `openagents publish [dir]`
+
+```bash
+openagents publish                                    # current directory
+openagents publish ./catalog/openagents/pr-reviewer
+openagents publish ./my-package --dry-run             # pack + validate, don't upload
+openagents publish ./my-package --changelog "Fixed the thing." --json
+openagents publish --from-github https://github.com/me/my-package \
+  --ref main --subdir packages/my-package
+```
+
+Validates the package directory exactly as `openagents validate` does, reads
+`openagent.yaml`, `README.md`, and every file `openagent.yaml` lists (UTF-8
+only — binary files are rejected), enforces the registry's limits client-side
+(≤200 files, ≤512KB per file, ≤2MB total) so a bad publish fails locally
+instead of after an upload, then prints a summary:
+
+```
+zach/my-package@1.2.0
+  kind:  workflow
+  files: 4 (6.1KB total)
+  price: free
+```
+
+`--dry-run` stops here without making a request. Otherwise it `POST`s to
+`/api/v1/publish` with your stored token (run `openagents login` first — a
+missing token fails immediately, before packing even completes network-side
+work) and prints the resulting package URL and status, calling out
+`status: pending (awaiting review)` when the registry queues it for review
+instead of publishing immediately.
+
+If `CHANGELOG.md` exists alongside `openagent.yaml`, its first `#`/`##`
+section is sent as the changelog automatically; `--changelog <text>`
+overrides that. A `400` response renders every issue the registry reports; a
+`409` (version already exists) suggests bumping `version` in
+`openagent.yaml`.
+
+`--from-github <url>` publishes directly from a GitHub repo instead of a
+local directory (`POST /api/v1/publish/import`), with `--ref <branch-or-tag>`
+and `--subdir <path>` for a non-default branch or a package that lives in a
+subdirectory of the repo.
 
 ## Errors
 
@@ -190,10 +269,43 @@ being silently ignored.
 
 - `OPENAGENTS_REGISTRY` — default registry base URL, overridden per-command by
   `--registry`.
+- `OPENAGENTS_TOKEN` — auth token to use for every request, overriding
+  whatever `login` has stored on disk (for CI/scripting; never written to a
+  file by the CLI itself).
+- `OPENAGENTS_CONFIG_DIR` — where `login`/`logout` read and write the token
+  file, overriding the OS default.
 
 Every request sends `User-Agent: openagents-cli/<version> (<runtime>)`, and
 `add`'s download request appends `?runtime=<id>`, so the registry can
 attribute installs by CLI version and runtime.
+
+### Authentication
+
+`openagents login` stores a personal access token per registry in a config
+file:
+
+| OS | Path |
+|---|---|
+| macOS / Linux | `~/.config/openagents/config.json` |
+| Windows | `%APPDATA%\openagents\config.json` |
+
+```json
+{ "registries": { "https://openagents-nu.vercel.app": { "token": "oa_...", "handle": "zach", "savedAt": "..." } } }
+```
+
+The file is written with mode `0600` where the filesystem supports it (POSIX;
+not enforced on Windows). Tokens are plaintext `oa_` + 40 hex characters, sent
+as `Authorization: Bearer <token>` on every request to the registry they were
+saved for; a token carries scopes (e.g. `publish`, `download`) that `whoami`
+prints and that gate what it can do server-side. Nothing but `login`/`logout`
+touches this file — every other command reads a token via `authHeaders()`
+(`cli/lib/util.js`) and never logs or prints it.
+
+Paid packages accept the same bearer token for downloads (a token with the
+`download` scope) — once you're logged in, buying a package on the site and
+then running `openagents add` should no longer require a browser. (As of this
+writing, `add`'s download request doesn't yet attach `authHeaders()` — see
+the CLI's `commands/add.js`, owned by a different workstream.)
 
 ## Development
 

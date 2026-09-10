@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { getToken } from "./auth.js";
 
 export const DEFAULT_REGISTRY = "https://openagents-nu.vercel.app";
 
@@ -19,6 +20,30 @@ export function cliVersion() {
 /** `User-Agent` header value sent on every registry request (G-A3). */
 export function userAgent(runtime) {
   return `openagents-cli/${cliVersion()} (${runtime || "unknown"})`;
+}
+
+/** The `User-Agent` header object, ready to spread into a `fetch` `headers`. */
+export function userAgentHeaders(runtime) {
+  return { "User-Agent": userAgent(runtime) };
+}
+
+/**
+ * `Authorization: Bearer <token>` header for `registry`, or `{}` if no token
+ * is stored for it (and `OPENAGENTS_TOKEN` isn't set). Used by every
+ * authenticated request (publish, `whoami`, paid downloads); other CLI
+ * command modules should call this rather than reading `auth.js` directly.
+ */
+export function authHeaders(registry) {
+  const token = getToken(registry);
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+function originOf(url) {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return undefined;
+  }
 }
 
 export function registryUrl(flagValue) {
@@ -100,6 +125,9 @@ export async function responseError(url, res, method = "GET") {
   } else {
     message = `${method} ${url} -> HTTP ${res.status}${bodyText ? `\n${bodyText.slice(0, 500)}` : ""}`;
   }
+  if (res.status === 401 || res.status === 403) {
+    message += `\nrun \`openagents login\` to authenticate.`;
+  }
   const err = new Error(message);
   err.status = res.status;
   err.body = body;
@@ -108,13 +136,44 @@ export async function responseError(url, res, method = "GET") {
 
 /**
  * Fetch JSON from `url`, throwing a readable error (see `responseError`) on
- * non-2xx or non-JSON. Sends the CLI's `User-Agent` header; pass `runtime`
- * so it can be included for registry analytics (G-A3).
+ * non-2xx or non-JSON. Sends the CLI's `User-Agent` header (pass `runtime`
+ * so it can be included for registry analytics, G-A3) and, when a token is
+ * stored for the target registry, an `Authorization: Bearer` header —
+ * `registry` defaults to `url`'s origin, which is right for every call site
+ * that builds `url` from `registryUrl()`.
  */
-export async function fetchJson(url, { runtime } = {}) {
+export async function fetchJson(url, { runtime, registry } = {}) {
+  const reg = registry ?? originOf(url);
   let res;
   try {
-    res = await fetch(url, { headers: { "User-Agent": userAgent(runtime) } });
+    res = await fetch(url, { headers: { ...userAgentHeaders(runtime), ...authHeaders(reg) } });
+  } catch (err) {
+    throw new Error(`could not reach ${url}: ${err.message}`);
+  }
+  if (!res.ok) {
+    throw await responseError(url, res, "GET");
+  }
+  try {
+    return await res.json();
+  } catch (err) {
+    throw new Error(`GET ${url} did not return valid JSON: ${err.message}`);
+  }
+}
+
+/**
+ * `GET /api/v1/me` with an explicit bearer `token` (not necessarily the one
+ * stored for `registry` — used by `login` to verify a token before saving
+ * it, and by `whoami` for the stored one). Returns `{ id, handle, name, via,
+ * scopes }`; throws (see `responseError`) on a non-2xx response, notably 401
+ * for an invalid/revoked token.
+ */
+export async function fetchMe(registry, token, { runtime } = {}) {
+  const url = `${registry}/api/v1/me`;
+  let res;
+  try {
+    res = await fetch(url, {
+      headers: { ...userAgentHeaders(runtime), Authorization: `Bearer ${token}` },
+    });
   } catch (err) {
     throw new Error(`could not reach ${url}: ${err.message}`);
   }
