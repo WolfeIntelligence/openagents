@@ -1,10 +1,16 @@
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
+import { eq } from "drizzle-orm";
 import { getCatalog, parseCatalogQuery } from "@/lib/catalog";
+import { auth } from "@/lib/auth";
+import { getDb } from "@/lib/db/client";
+import { users } from "@/lib/db/schema";
+import { getCreatorTotals } from "@/lib/stats";
 import { PackageCard } from "@/components/PackageCard";
 import { EmptyState } from "@/components/EmptyState";
 import { SortSelect } from "@/components/SortSelect";
 import { Pagination } from "@/components/Pagination";
+import { RatingStars } from "@/components/RatingStars";
 
 type Params = { owner: string };
 type RawSearchParams = Record<string, string | string[] | undefined>;
@@ -36,16 +42,46 @@ export default async function CreatorPage({
   const query = parseCatalogQuery(rawParams);
   const page = Math.max(1, Number(rawParams.page) || 1);
 
-  const [creator, packages] = await Promise.all([
+  const session = await auth();
+  const isViewerOwner = Boolean(session?.user?.handle && session.user.handle === owner);
+
+  const [creator, packages, totals] = await Promise.all([
     catalog.creator(owner),
     catalog.list({
       owner,
       sort: query.sort,
       limit: PAGE_SIZE,
       offset: (page - 1) * PAGE_SIZE,
+      // Owners get to see their own pending/unlisted packages here too — everyone
+      // else only sees what's actually live (plus deprecated).
+      includeHidden: isViewerOwner,
     }),
+    getCreatorTotals(owner),
   ]);
   if (!creator) notFound();
+
+  // `catalog.creator` doesn't surface `users.website` for DB-backed users (only
+  // a seed owner's `owner.json` "url"), so read it directly here too, same as
+  // `/api/v1/users/[handle]`.
+  let website: string | null = creator.url ?? null;
+  // `users` has no `createdAt` column (out of scope here — schema is owned by
+  // another workstream), so there's no real join date to show yet. Kept as a
+  // variable rather than inlining `null` so the JSX below doesn't need to
+  // change once one exists.
+  const joinedAt: string | null = null;
+  const db = getDb();
+  if (db) {
+    try {
+      const [row] = await db
+        .select({ website: users.website })
+        .from(users)
+        .where(eq(users.handle, owner))
+        .limit(1);
+      if (row?.website) website = row.website;
+    } catch {
+      // Fall back to whatever the seed catalog provided.
+    }
+  }
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
@@ -57,16 +93,22 @@ export default async function CreatorPage({
           <h1 className="text-xl font-semibold text-fg">{creator.displayName}</h1>
           <p className="font-mono text-sm text-fg-subtle">@{creator.handle}</p>
           {creator.bio && <p className="mt-1.5 max-w-xl text-sm text-fg-muted">{creator.bio}</p>}
-          <div className="mt-2 flex items-center gap-3 text-xs text-fg-subtle">
+          <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-fg-subtle">
             <span>{creator.packageCount.toLocaleString()} packages</span>
-            {creator.url && (
+            {totals.stars > 0 && <span>{totals.stars.toLocaleString()} stars</span>}
+            {totals.downloads > 0 && <span>{totals.downloads.toLocaleString()} downloads</span>}
+            {totals.ratingCount ? (
+              <RatingStars average={totals.ratingAverage} count={totals.ratingCount} />
+            ) : null}
+            {joinedAt && <span>Joined {joinedAt}</span>}
+            {website && (
               <a
-                href={creator.url}
+                href={website}
                 target="_blank"
                 rel="noreferrer noopener"
                 className="text-accent hover:text-accent-hover"
               >
-                {creator.url.replace(/^https?:\/\//, "")}
+                {website.replace(/^https?:\/\//, "")}
               </a>
             )}
           </div>

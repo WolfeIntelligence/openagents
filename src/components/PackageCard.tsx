@@ -1,9 +1,24 @@
 import Link from "next/link";
-import type { PackageSummary } from "@/lib/types";
+import type { PackageSummary, PackageStatus } from "@/lib/types";
 import { KindBadge } from "@/components/KindBadge";
 import { PricingBadge } from "@/components/PricingBadge";
+import { RatingStars } from "@/components/RatingStars";
+
+const STATUS_PILL_LABEL: Partial<Record<PackageStatus, string>> = {
+  deprecated: "Deprecated",
+  unlisted: "Unlisted",
+  pending: "Pending",
+};
+
+const STATUS_PILL_TONE: Partial<Record<PackageStatus, string>> = {
+  deprecated: "border-warning/40 bg-warning/10 text-fg",
+  unlisted: "border-border-strong text-fg-muted",
+  pending: "border-border-strong text-fg-muted",
+};
 
 export function PackageCard({ pkg }: { pkg: PackageSummary }) {
+  const statusLabel = STATUS_PILL_LABEL[pkg.status];
+
   return (
     <Link
       href={`/p/${pkg.owner}/${pkg.name}`}
@@ -25,6 +40,13 @@ export function PackageCard({ pkg }: { pkg: PackageSummary }) {
 
       <div className="flex flex-wrap items-center gap-1.5">
         <KindBadge kind={pkg.kind} />
+        {statusLabel && (
+          <span
+            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${STATUS_PILL_TONE[pkg.status]}`}
+          >
+            {statusLabel}
+          </span>
+        )}
         {pkg.tags.slice(0, 3).map((tag) => (
           <span
             key={tag}
@@ -34,6 +56,10 @@ export function PackageCard({ pkg }: { pkg: PackageSummary }) {
           </span>
         ))}
       </div>
+
+      {pkg.stats.ratingCount ? (
+        <RatingStars average={pkg.stats.ratingAverage} count={pkg.stats.ratingCount} />
+      ) : null}
 
       {/* Counts are real, so a package with no history shows no count at all
           rather than a row of zeros. New packages say so instead. */}

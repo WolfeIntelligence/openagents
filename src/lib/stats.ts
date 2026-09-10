@@ -173,3 +173,46 @@ export async function toggleStar(
     return null;
   }
 }
+
+export interface CreatorTotals {
+  stars: number;
+  downloads: number;
+  ratingAverage?: number;
+  ratingCount?: number;
+}
+
+const ZERO_CREATOR_TOTALS: CreatorTotals = { stars: 0, downloads: 0 };
+
+/**
+ * Sums `package_stats` across every package this creator owns — one row per
+ * (owner, name), which covers seed and DB-backed packages alike (same reasoning
+ * as `getStats` above). Used by the creator profile page/API, where "aggregate"
+ * means "across everything they've published," not one package's own numbers.
+ * Zero totals when the DB is off or the query fails.
+ */
+export async function getCreatorTotals(owner: string): Promise<CreatorTotals> {
+  const db = getDb();
+  if (!db) return ZERO_CREATOR_TOTALS;
+
+  try {
+    const [row] = await db
+      .select({
+        stars: sql<number>`coalesce(sum(${packageStats.stars}), 0)::int`,
+        downloads: sql<number>`coalesce(sum(${packageStats.downloads}), 0)::int`,
+        ratingCount: sql<number>`coalesce(sum(${packageStats.ratingCount}), 0)::int`,
+        ratingSum: sql<number>`coalesce(sum(${packageStats.ratingSum}), 0)::int`,
+      })
+      .from(packageStats)
+      .where(eq(packageStats.owner, owner));
+
+    if (!row) return ZERO_CREATOR_TOTALS;
+    return {
+      stars: row.stars,
+      downloads: row.downloads,
+      ratingCount: row.ratingCount || undefined,
+      ratingAverage: row.ratingCount ? row.ratingSum / row.ratingCount : undefined,
+    };
+  } catch {
+    return ZERO_CREATOR_TOTALS;
+  }
+}
