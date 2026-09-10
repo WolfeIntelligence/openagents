@@ -16,6 +16,7 @@ import { StarButton } from "@/components/StarButton";
 import { isStarred } from "@/lib/stats";
 import { isDbEnabled } from "@/lib/db/client";
 import { formatPrice } from "@/lib/format";
+import { StatsPanel } from "@/components/StatsPanel";
 
 type Params = { owner: string; name: string };
 type TabId = "readme" | "files" | "manifest" | "versions";
@@ -216,28 +217,13 @@ export default async function PackagePage({
             </SidebarSection>
 
             <SidebarSection title="Stats">
-              <dl className="flex flex-col gap-1.5 text-sm">
-                <div className="flex justify-between">
-                  <dt className="text-fg-muted">Stars</dt>
-                  <dd className="font-mono text-fg">
-                    {pkg.stats.stars > 0 ? pkg.stats.stars.toLocaleString() : "None yet"}
-                  </dd>
-                </div>
-                <div className="flex justify-between">
-                  <dt className="text-fg-muted">Downloads</dt>
-                  <dd className="font-mono text-fg">
-                    {pkg.stats.downloads > 0 ? pkg.stats.downloads.toLocaleString() : "None yet"}
-                  </dd>
-                </div>
-                <div className="flex justify-between">
-                  <dt className="text-fg-muted">Updated</dt>
-                  <dd className="text-fg">{new Date(pkg.updatedAt).toLocaleDateString()}</dd>
-                </div>
-                <div className="flex justify-between">
-                  <dt className="text-fg-muted">Source</dt>
-                  <dd className="text-fg">{pkg.source}</dd>
-                </div>
-              </dl>
+              <StatsPanel
+                owner={owner}
+                name={name}
+                stats={pkg.stats}
+                updatedAt={pkg.updatedAt}
+                source={pkg.source}
+              />
             </SidebarSection>
 
             <SidebarSection title="Creator">

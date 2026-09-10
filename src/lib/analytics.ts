@@ -72,6 +72,23 @@ export interface DailyCount {
   count: number;
 }
 
+/**
+ * Fills a sparse `DailyCount[]` (only days with at least one event) into a dense series
+ * of exactly `days` entries — one per UTC calendar day, oldest first, ending on
+ * `utcDay(end)` — with `count: 0` for days that had no rows. Pure and synchronous, so
+ * `Sparkline` (and any other renderer) always gets a full-width series, including for a
+ * brand-new package with zero download events.
+ */
+export function fillDailySeries(rows: DailyCount[], days: number, end: Date = new Date()): DailyCount[] {
+  const counts = new Map(rows.map((r) => [r.day, r.count]));
+  const series: DailyCount[] = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const day = utcDay(new Date(end.getTime() - i * 86_400_000));
+    series.push({ day, count: counts.get(day) ?? 0 });
+  }
+  return series;
+}
+
 /** Unique downloads per UTC day for one package over the last `days` days. */
 export async function downloadsByDay(owner: string, name: string, days = 30): Promise<DailyCount[]> {
   const db = getDb();

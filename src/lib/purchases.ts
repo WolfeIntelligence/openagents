@@ -3,7 +3,7 @@
 // with zero env vars — every export here degrades harmlessly when Stripe/DB are
 // disabled, and none of them throw (failures come back as `false` / `{ ok: false }`).
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { getStripe } from "@/lib/stripe";
 import { packages, purchases } from "@/lib/db/schema";
@@ -56,6 +56,9 @@ interface RecordPaidPurchaseArgs {
   amountCents: number;
   /** ISO 4217 lowercase, as charged (Stripe reports it on the session). */
   currency?: string | null;
+  /** Stripe-hosted receipt for the charge, when the caller could resolve one
+   *  (the webhook looks this up via the PaymentIntent's latest charge). */
+  receiptUrl?: string | null;
 }
 
 /**
@@ -63,8 +66,10 @@ interface RecordPaidPurchaseArgs {
  * reported to us more than once — `checkout.session.completed` redelivering, and the
  * package-page success-banner fallback (`confirmCheckoutSession` below) racing the
  * webhook — so the insert leans on the `purchases_stripe_session_unique` constraint:
- * a second report of the same session is a no-op at the database, which stays
- * correct even when the two reports arrive concurrently.
+ * a second report of the same session updates at most `receiptUrl`, and only when the
+ * existing row doesn't have one yet (`coalesce(existing, incoming)`) — every other
+ * column (amount, status, ids) is set once by whichever report lands first and never
+ * touched again, so a redelivery can't rewrite what was actually charged.
  */
 export async function recordPaidPurchase(db: Db, args: RecordPaidPurchaseArgs): Promise<void> {
   await db
@@ -76,9 +81,15 @@ export async function recordPaidPurchase(db: Db, args: RecordPaidPurchaseArgs): 
       stripePaymentIntent: args.stripePaymentIntent ?? undefined,
       amountCents: args.amountCents,
       currency: args.currency ?? undefined,
+      receiptUrl: args.receiptUrl ?? undefined,
       status: "paid",
     })
-    .onConflictDoNothing({ target: purchases.stripeSessionId });
+    .onConflictDoUpdate({
+      target: purchases.stripeSessionId,
+      set: {
+        receiptUrl: sql`coalesce(${purchases.receiptUrl}, excluded."receiptUrl")`,
+      },
+    });
 }
 
 /** Marks the purchase for `stripeSessionId` as `failed` (used for
@@ -103,6 +114,31 @@ export async function setStatusByPaymentIntent(
     .update(purchases)
     .set({ status })
     .where(eq(purchases.stripePaymentIntent, stripePaymentIntent));
+}
+
+type StripeClient = NonNullable<ReturnType<typeof getStripe>>;
+
+/**
+ * Best-effort Stripe-hosted receipt lookup: retrieves the PaymentIntent (expanding its
+ * latest charge) and returns that charge's `receipt_url`. Shared by the webhook and
+ * `confirmCheckoutSession` so both recording paths attach a receipt the same way.
+ * Never throws — a receipt link is never worth failing a purchase over — and returns
+ * null for a missing id, an unresolvable charge, or any Stripe error.
+ */
+export async function resolveReceiptUrl(
+  stripe: StripeClient,
+  paymentIntentId: string | undefined
+): Promise<string | null> {
+  if (!paymentIntentId) return null;
+  try {
+    const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId, {
+      expand: ["latest_charge"],
+    });
+    const charge = paymentIntent.latest_charge;
+    return typeof charge === "string" ? null : (charge?.receipt_url ?? null);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -135,13 +171,17 @@ export async function confirmCheckoutSession(
     }
 
     const paymentIntent = checkoutSession.payment_intent;
+    const stripePaymentIntent =
+      typeof paymentIntent === "string" ? paymentIntent : paymentIntent?.id;
+    const receiptUrl = await resolveReceiptUrl(stripe, stripePaymentIntent);
     await recordPaidPurchase(db, {
       userId,
       packageId,
       stripeSessionId: checkoutSession.id,
-      stripePaymentIntent: typeof paymentIntent === "string" ? paymentIntent : paymentIntent?.id,
+      stripePaymentIntent,
       amountCents: checkoutSession.amount_total ?? 0,
       currency: checkoutSession.currency,
+      receiptUrl,
     });
     return { ok: true };
   } catch {
