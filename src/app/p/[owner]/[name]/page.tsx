@@ -10,10 +10,12 @@ import { PricingBadge } from "@/components/PricingBadge";
 import { RuntimeChips } from "@/components/RuntimeChips";
 import { InstallBox } from "@/components/InstallBox";
 import { BuyButton } from "@/components/BuyButton";
+import { CheckoutConfirmationBanner } from "@/components/CheckoutConfirmationBanner";
 import { Markdown } from "@/components/Markdown";
 import { StarButton } from "@/components/StarButton";
 import { isStarred } from "@/lib/stats";
 import { isDbEnabled } from "@/lib/db/client";
+import { formatPrice } from "@/lib/format";
 
 type Params = { owner: string; name: string };
 type TabId = "readme" | "files" | "manifest" | "versions";
@@ -49,10 +51,10 @@ export default async function PackagePage({
   searchParams,
 }: {
   params: Promise<Params>;
-  searchParams: Promise<{ tab?: string; checkout?: string }>;
+  searchParams: Promise<{ tab?: string; checkout?: string; session_id?: string }>;
 }) {
   const { owner, name } = await params;
-  const { tab: rawTab, checkout } = await searchParams;
+  const { tab: rawTab, checkout, session_id: checkoutSessionId } = await searchParams;
   const pkg = await loadPackage(owner, name);
   if (!pkg) notFound();
 
@@ -111,9 +113,10 @@ export default async function PackagePage({
           {/* Action row */}
           <div className="mb-6 flex flex-col gap-4">
             {checkout === "success" && (
-              <div className="rounded-lg border border-accent-border bg-accent-muted p-3 text-sm text-fg">
-                Purchase complete — you own this package.
-              </div>
+              <CheckoutConfirmationBanner
+                userId={session?.user?.id}
+                sessionId={checkoutSessionId}
+              />
             )}
             {checkout === "cancelled" && (
               <div className="rounded-lg border border-border bg-surface p-3 text-sm text-fg-muted">
@@ -151,10 +154,7 @@ export default async function PackagePage({
                 <BuyButton
                   owner={owner}
                   name={name}
-                  label={`Buy — ${(manifest.pricing.amountCents / 100).toLocaleString(undefined, {
-                    style: "currency",
-                    currency: manifest.pricing.currency.toUpperCase(),
-                  })}`}
+                  label={`Buy — ${formatPrice(manifest.pricing.amountCents, manifest.pricing.currency)}`}
                 />
               )}
             </div>

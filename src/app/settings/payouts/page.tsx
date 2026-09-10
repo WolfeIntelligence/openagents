@@ -2,12 +2,14 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
-import { and, eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { getDb, isDbEnabled } from "@/lib/db/client";
 import { getConnectedAccountStatus, isStripeEnabled, PLATFORM_FEE_BPS } from "@/lib/stripe";
 import { packages, purchases, users } from "@/lib/db/schema";
 import { ConnectStripeButton } from "@/components/ConnectStripeButton";
+import { formatPrice } from "@/lib/format";
+import { PurchaseStatusBadge } from "@/components/PurchaseStatusBadge";
 
 export const metadata: Metadata = {
   title: "Payouts",
@@ -19,20 +21,21 @@ interface PayoutsPageProps {
 }
 
 interface SaleRow {
-  packageId: string;
+  id: string;
   owner: string;
   name: string;
   title: string;
-  count: number;
-  grossCents: number;
+  amountCents: number;
+  // `purchases.currency` doesn't exist in the schema yet (see the payments-workstream
+  // report's "Needs change elsewhere") — fall back to the package's current currency.
+  currency: string;
+  status: string;
+  createdAt: Date;
 }
 
-function formatMoney(cents: number, currency = "usd"): string {
-  return (cents / 100).toLocaleString(undefined, {
-    style: "currency",
-    currency: currency.toUpperCase(),
-  });
-}
+/** Refunded/disputed/failed money never reached (or was clawed back from) the seller,
+ *  so it's excluded from the totals below — the sales table still lists every row. */
+const EXCLUDED_FROM_TOTALS = new Set(["refunded", "disputed", "failed"]);
 
 export default async function PayoutsPage({ searchParams }: PayoutsPageProps) {
   const { connected, refresh } = await searchParams;
@@ -90,41 +93,36 @@ export default async function PayoutsPage({ searchParams }: PayoutsPageProps) {
 
   let sales: SaleRow[] = [];
   if (user.handle) {
-    const rows = await db
+    sales = await db
       .select({
-        packageId: packages.id,
+        id: purchases.id,
         owner: packages.owner,
         name: packages.name,
         title: packages.title,
         amountCents: purchases.amountCents,
+        currency: packages.currency,
+        status: purchases.status,
+        createdAt: purchases.createdAt,
       })
       .from(purchases)
       .innerJoin(packages, eq(purchases.packageId, packages.id))
-      .where(and(eq(packages.owner, user.handle), eq(purchases.status, "paid")));
-
-    const byPackage = new Map<string, SaleRow>();
-    for (const row of rows) {
-      const existing = byPackage.get(row.packageId);
-      if (existing) {
-        existing.count += 1;
-        existing.grossCents += row.amountCents;
-      } else {
-        byPackage.set(row.packageId, {
-          packageId: row.packageId,
-          owner: row.owner,
-          name: row.name,
-          title: row.title,
-          count: 1,
-          grossCents: row.amountCents,
-        });
-      }
-    }
-    sales = Array.from(byPackage.values()).sort((a, b) => b.grossCents - a.grossCents);
+      .where(eq(packages.owner, user.handle))
+      .orderBy(desc(purchases.createdAt));
   }
 
   const creatorShare = (10000 - PLATFORM_FEE_BPS) / 10000;
-  const totalGross = sales.reduce((sum, s) => sum + s.grossCents, 0);
-  const totalNet = Math.round(totalGross * creatorShare);
+
+  // Grouped by currency rather than a single total — a seller can price different
+  // packages in different currencies, and summing raw minor units across currencies
+  // would produce a meaningless number.
+  const totalsByCurrency = new Map<string, { grossCents: number; count: number }>();
+  for (const sale of sales) {
+    if (EXCLUDED_FROM_TOTALS.has(sale.status)) continue;
+    const totals = totalsByCurrency.get(sale.currency) ?? { grossCents: 0, count: 0 };
+    totals.grossCents += sale.amountCents;
+    totals.count += 1;
+    totalsByCurrency.set(sale.currency, totals);
+  }
 
   return (
     <PageShell>
@@ -158,14 +156,14 @@ export default async function PayoutsPage({ searchParams }: PayoutsPageProps) {
                 <thead>
                   <tr className="border-b border-border bg-surface text-left">
                     <th className="px-4 py-2 font-medium text-fg-muted">Package</th>
-                    <th className="px-4 py-2 font-medium text-fg-muted">Sales</th>
-                    <th className="px-4 py-2 font-medium text-fg-muted">Gross</th>
-                    <th className="px-4 py-2 font-medium text-fg-muted">Your net (90%)</th>
+                    <th className="px-4 py-2 font-medium text-fg-muted">Date</th>
+                    <th className="px-4 py-2 font-medium text-fg-muted">Amount</th>
+                    <th className="px-4 py-2 font-medium text-fg-muted">Status</th>
                   </tr>
                 </thead>
                 <tbody>
                   {sales.map((s) => (
-                    <tr key={s.packageId} className="border-b border-border last:border-0">
+                    <tr key={s.id} className="border-b border-border last:border-0">
                       <td className="px-4 py-2">
                         <Link
                           href={`/p/${s.owner}/${s.name}`}
@@ -174,21 +172,28 @@ export default async function PayoutsPage({ searchParams }: PayoutsPageProps) {
                           {s.owner}/{s.name}
                         </Link>
                       </td>
-                      <td className="px-4 py-2 font-mono text-fg">{s.count.toLocaleString()}</td>
-                      <td className="px-4 py-2 font-mono text-fg">{formatMoney(s.grossCents)}</td>
-                      <td className="px-4 py-2 font-mono text-fg">
-                        {formatMoney(Math.round(s.grossCents * creatorShare))}
+                      <td className="px-4 py-2 text-fg-muted">{s.createdAt.toLocaleDateString()}</td>
+                      <td className="px-4 py-2 font-mono text-fg">{formatPrice(s.amountCents, s.currency)}</td>
+                      <td className="px-4 py-2">
+                        <PurchaseStatusBadge status={s.status} />
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-            <p className="mt-3 text-sm text-fg-muted">
-              Total: <span className="font-mono text-fg">{formatMoney(totalGross)}</span> gross,{" "}
-              <span className="font-mono text-fg">{formatMoney(totalNet)}</span> net across{" "}
-              {sales.reduce((n, s) => n + s.count, 0).toLocaleString()} sale(s).
-            </p>
+            <div className="mt-3 flex flex-col gap-1 text-sm text-fg-muted">
+              {Array.from(totalsByCurrency.entries()).map(([currency, totals]) => (
+                <p key={currency}>
+                  Total: <span className="font-mono text-fg">{formatPrice(totals.grossCents, currency)}</span>{" "}
+                  gross,{" "}
+                  <span className="font-mono text-fg">
+                    {formatPrice(Math.round(totals.grossCents * creatorShare), currency)}
+                  </span>{" "}
+                  net across {totals.count.toLocaleString()} sale(s).
+                </p>
+              ))}
+            </div>
           </>
         )}
       </div>

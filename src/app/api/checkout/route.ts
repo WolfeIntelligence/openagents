@@ -3,6 +3,7 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { createCheckoutSession, isStripeEnabled } from "@/lib/stripe";
 import { getCatalog } from "@/lib/catalog";
+import { hasPurchased } from "@/lib/purchases";
 
 const bodySchema = z.object({ owner: z.string().min(1), name: z.string().min(1) });
 
@@ -27,8 +28,22 @@ export async function POST(req: NextRequest) {
   if (!pkg) {
     return NextResponse.json({ error: "package not found" }, { status: 404 });
   }
-  if (pkg.manifest.pricing.model === "free") {
+
+  const { pricing } = pkg.manifest;
+  if (pricing.model === "free") {
     return NextResponse.json({ error: "package is free" }, { status: 400 });
+  }
+  if (pricing.model === "subscription") {
+    return NextResponse.json(
+      { error: "subscription pricing is not available yet" },
+      { status: 400 }
+    );
+  }
+  if (session.user.handle && session.user.handle === pkg.owner) {
+    return NextResponse.json({ error: "you own this package" }, { status: 400 });
+  }
+  if (await hasPurchased(session.user.id, pkg.owner, pkg.name)) {
+    return NextResponse.json({ error: "you already own this package" }, { status: 400 });
   }
 
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? new URL(req.url).origin;
@@ -37,7 +52,11 @@ export async function POST(req: NextRequest) {
     const { url } = await createCheckoutSession({
       pkg,
       buyerUserId: session.user.id,
-      successUrl: `${siteUrl}/p/${pkg.owner}/${pkg.name}?checkout=success`,
+      // `{CHECKOUT_SESSION_ID}` is a Stripe template literal — it substitutes the real
+      // session id into the redirect URL. The package page uses it to confirm the
+      // session directly with Stripe rather than trusting the bare `checkout=success`
+      // query param (see confirmCheckoutSession in src/lib/purchases.ts).
+      successUrl: `${siteUrl}/p/${pkg.owner}/${pkg.name}?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
       cancelUrl: `${siteUrl}/p/${pkg.owner}/${pkg.name}?checkout=cancelled`,
     });
     return NextResponse.json({ url });

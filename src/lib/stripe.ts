@@ -7,6 +7,7 @@ import { and, eq } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { packages, users } from "@/lib/db/schema";
 import type { Package } from "@/lib/types";
+import { isSupportedCurrency } from "@/lib/format";
 
 let cached: Stripe | null | undefined;
 
@@ -71,6 +72,9 @@ export async function createCheckoutSession({
 
   const amountCents = pkg.manifest.pricing.amountCents;
   const currency = pkg.manifest.pricing.currency;
+  if (!isSupportedCurrency(currency)) {
+    throw new Error(`package ${pkg.id} has an unsupported currency: ${currency}`);
+  }
   const applicationFeeAmount = Math.round((amountCents * PLATFORM_FEE_BPS) / 10000);
 
   const session = await stripe.checkout.sessions.create({
@@ -99,6 +103,7 @@ export async function createCheckoutSession({
       owner: pkg.owner,
       name: pkg.name,
       buyerUserId,
+      currency,
     },
   });
 
