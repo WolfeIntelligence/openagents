@@ -23,14 +23,19 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { DeprecationBanner } from "@/components/DeprecationBanner";
 import { OwnerActions } from "@/components/OwnerActions";
 import { ReportButton } from "@/components/ReportButton";
+import { ReviewsTab } from "@/components/ReviewsTab";
+import { RatingStars } from "@/components/RatingStars";
 
 type Params = { owner: string; name: string };
-type TabId = "readme" | "files" | "manifest" | "versions";
+type TabId = "readme" | "files" | "manifest" | "versions" | "reviews";
 const TABS: { id: TabId; label: string }[] = [
   { id: "readme", label: "Readme" },
   { id: "files", label: "Files" },
   { id: "manifest", label: "Manifest" },
   { id: "versions", label: "Versions" },
+  // Reviews need somewhere to be stored — hide the tab entirely rather than
+  // show an empty/broken one when this deployment has no database.
+  ...(isDbEnabled() ? [{ id: "reviews" as const, label: "Reviews" }] : []),
 ];
 
 async function loadPackage(owner: string, name: string) {
@@ -241,6 +246,9 @@ export default async function PackagePage({
                 versions={pkg.versions}
               />
             )}
+            {activeTab === "reviews" && (
+              <ReviewsTab owner={owner} name={name} isOwner={isOwner} userId={session?.user?.id} userHandle={session?.user?.handle} />
+            )}
           </div>
         </div>
 
@@ -310,6 +318,41 @@ export default async function PackagePage({
                   </span>
                 </span>
               </Link>
+              {creator?.bio && <p className="mt-2 text-sm text-fg-muted">{creator.bio}</p>}
+              {creator?.url && (
+                <a
+                  href={creator.url}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="mt-1.5 block truncate text-xs text-accent hover:text-accent-hover"
+                >
+                  {creator.url.replace(/^https?:\/\//, "")}
+                </a>
+              )}
+              {(pkg.stats.stars > 0 || pkg.stats.downloads > 0 || pkg.stats.ratingCount) && (
+                <dl className="mt-3 flex flex-col gap-1.5 text-sm">
+                  {pkg.stats.stars > 0 && (
+                    <div className="flex justify-between">
+                      <dt className="text-fg-muted">Stars</dt>
+                      <dd className="font-mono text-fg">{pkg.stats.stars.toLocaleString()}</dd>
+                    </div>
+                  )}
+                  {pkg.stats.downloads > 0 && (
+                    <div className="flex justify-between">
+                      <dt className="text-fg-muted">Downloads</dt>
+                      <dd className="font-mono text-fg">{pkg.stats.downloads.toLocaleString()}</dd>
+                    </div>
+                  )}
+                  {pkg.stats.ratingCount ? (
+                    <div className="flex items-center justify-between">
+                      <dt className="text-fg-muted">Rating</dt>
+                      <dd>
+                        <RatingStars average={pkg.stats.ratingAverage} count={pkg.stats.ratingCount} />
+                      </dd>
+                    </div>
+                  ) : null}
+                </dl>
+              )}
             </SidebarSection>
           </div>
         </aside>
