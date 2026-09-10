@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { auth, isAuthEnabled } from "@/lib/auth";
 import { isDbEnabled } from "@/lib/db/client";
+import { isStripeEnabled, PLATFORM_FEE_BPS } from "@/lib/stripe";
 import { PublishForm } from "@/components/PublishForm";
 import { CopyButton } from "@/components/CopyButton";
 
@@ -48,12 +49,19 @@ export default async function PublishPage() {
       <p className="mt-2 max-w-2xl text-sm text-fg-muted">
         A package is a directory containing an <code className="font-mono">openagent.yaml</code>{" "}
         manifest, a <code className="font-mono">README.md</code>, and any number of files. Free
-        packages are always free to publish. Paid packages keep a 90% creator share after the 10%
-        platform fee — connect a payout account first at{" "}
-        <Link href="/settings/payouts" className="text-accent hover:text-accent-hover">
-          Settings → Payouts
-        </Link>
-        .
+        packages are always free to publish.{" "}
+        {isStripeEnabled() ? (
+          <>
+            Paid packages keep a {100 - PLATFORM_FEE_BPS / 100}% creator share after the{" "}
+            {PLATFORM_FEE_BPS / 100}% platform fee — connect a payout account first at{" "}
+            <Link href="/settings/payouts" className="text-accent hover:text-accent-hover">
+              Settings → Payouts
+            </Link>
+            .
+          </>
+        ) : (
+          <>Paid packages are not accepting payments on this deployment yet.</>
+        )}
       </p>
 
       <div className="mt-6 overflow-hidden rounded-lg border border-border">
