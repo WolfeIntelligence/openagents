@@ -281,15 +281,22 @@ export async function packageHasPurchases(owner: string, name: string): Promise<
   const db = getDb();
   if (!db) return false;
 
-  const row = await getDbPackageRow(db, owner, name);
-  if (!row) return false;
+  try {
+    const row = await getDbPackageRow(db, owner, name);
+    if (!row) return false;
 
-  const [existing] = await db
-    .select({ id: purchases.id })
-    .from(purchases)
-    .where(eq(purchases.packageId, row.id))
-    .limit(1);
-  return Boolean(existing);
+    const [existing] = await db
+      .select({ id: purchases.id })
+      .from(purchases)
+      .where(eq(purchases.packageId, row.id))
+      .limit(1);
+    return Boolean(existing);
+  } catch {
+    // A DB error must not take the package page down. Answer "yes" so the only
+    // thing it affects — the owner's Delete button — stays disabled until the
+    // database can actually be asked.
+    return true;
+  }
 }
 
 // ---------------------------------------------------------------------------

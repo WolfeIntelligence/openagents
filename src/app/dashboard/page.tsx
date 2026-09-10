@@ -91,10 +91,12 @@ export default async function DashboardPage({
 
   // Sales are only ever recorded against DB-backed packages (`createCheckoutSession`
   // requires a `packages` row), so this join only ever covers a subset of `items`.
+  // A failed lookup degrades to "no sales data" rather than a broken dashboard.
   const dbRows = await db
     .select({ id: packages.id, owner: packages.owner, name: packages.name })
     .from(packages)
-    .where(eq(packages.owner, handle));
+    .where(eq(packages.owner, handle))
+    .catch(() => [] as { id: string; owner: string; name: string }[]);
   const dbIdByKey = new Map(dbRows.map((r) => [`${r.owner}/${r.name}`, r.id]));
 
   const salesByPackageId = new Map<string, CurrencyTotal[]>();
