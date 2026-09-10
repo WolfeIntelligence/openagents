@@ -84,7 +84,8 @@ export async function POST(
     return json(result);
   } catch (err) {
     if (err instanceof PackageActionError) return error(err.status, err.message);
-    throw err;
+    console.error(`[api] ${new URL(request.url).pathname}:`, err);
+    return error(503, "temporarily unavailable; try again shortly");
   }
 }
 

@@ -362,7 +362,7 @@ export function createDbCatalog(seed: Catalog): Catalog {
     db: Db | null,
     effectiveQuery: CatalogQuery,
     effectiveTerms: string[]
-  ): Promise<PackageSummary[]> {
+  ): Promise<{ items: PackageSummary[]; seedCorrectedQuery?: string }> {
     // Explicit ceiling, not `undefined` — see CATALOG_ALL_LIMIT. Merging needs
     // every matching seed package, then this layer pages the merged result.
     const seedQuery: CatalogQuery = { ...effectiveQuery, limit: CATALOG_ALL_LIMIT, offset: 0 };
@@ -370,7 +370,12 @@ export function createDbCatalog(seed: Catalog): Catalog {
       seed.list(seedQuery),
       db ? safe(queryDbSummaries(db, effectiveQuery, effectiveTerms), "list query", []) : Promise.resolve([]),
     ]);
-    return mergeSummaries(seedPage.items, dbSummaries);
+    return {
+      items: mergeSummaries(seedPage.items, dbSummaries),
+      // The seed catalog self-corrects typos; surface that so the caller can tell
+      // the user what was actually searched for.
+      seedCorrectedQuery: seedPage.correctedQuery,
+    };
   }
 
   return {
@@ -378,9 +383,11 @@ export function createDbCatalog(seed: Catalog): Catalog {
       const db = getDb();
       const rawTerms = query.q ? tokenize(query.q) : [];
 
-      let combined = await fetchCombined(db, query, rawTerms);
-      let terms = rawTerms;
-      let correctedQuery: string | undefined;
+      const first = await fetchCombined(db, query, rawTerms);
+      let combined = first.items;
+      let correctedQuery: string | undefined =
+        combined.length > 0 ? first.seedCorrectedQuery : undefined;
+      let terms = correctedQuery ? tokenize(correctedQuery) : rawTerms;
 
       // G-S1 typo tolerance: seed.list() already self-corrects within its own
       // vocabulary (so zero-env mode gets this for free), but a zero *merged*
@@ -396,8 +403,8 @@ export function createDbCatalog(seed: Catalog): Catalog {
             { ...query, q: correction.correctedQuery },
             correction.terms
           );
-          if (retried.length > 0) {
-            combined = retried;
+          if (retried.items.length > 0) {
+            combined = retried.items;
             terms = correction.terms;
             correctedQuery = correction.correctedQuery;
           }

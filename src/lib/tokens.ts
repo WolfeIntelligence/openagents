@@ -178,7 +178,17 @@ export async function verifyToken(token: string): Promise<TokenPrincipal | null>
   if (!db) return null;
 
   const hash = hashToken(token);
-  const [row] = await db
+  // A DB error (unreachable, or the api_tokens table not migrated yet) must read as
+  // "not authenticated", never as a 500 that leaks whether the token was well-formed.
+  let rows: Awaited<ReturnType<typeof lookup>>;
+  try {
+    rows = await lookup();
+  } catch {
+    return null;
+  }
+  const [row] = rows;
+  async function lookup() {
+    return db!
     .select({
       tokenId: apiTokens.id,
       scopes: apiTokens.scopes,
@@ -192,6 +202,7 @@ export async function verifyToken(token: string): Promise<TokenPrincipal | null>
     .innerJoin(users, eq(apiTokens.userId, users.id))
     .where(and(eq(apiTokens.tokenHash, hash), isNull(apiTokens.revokedAt)))
     .limit(1);
+  }
 
   if (!row) return null;
 

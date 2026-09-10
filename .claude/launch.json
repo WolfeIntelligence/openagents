@@ -1,6 +1,7 @@
 {
   "version": "0.0.1",
   "configurations": [
-    { "name": "openagents-dev", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dev", "--", "-p", "3210"], "port": 3210 }
+    { "name": "openagents-dev", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dev", "--", "-p", "3210"], "port": 3210 },
+    { "name": "openagents-start-b2", "runtimeExecutable": "npx", "runtimeArgs": ["next", "start", "-p", "3301"], "port": 3301 }
   ]
 }
