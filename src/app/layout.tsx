@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
+import { siteUrl } from "@/lib/site";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -21,7 +22,8 @@ export const metadata: Metadata = {
   },
   description:
     "Find, install, and publish agentic workflows, harnesses, rules, and skills for Claude Code, Cursor, Codex, and more.",
-  metadataBase: new URL("https://openagents.dev"),
+  metadataBase: new URL(siteUrl()),
+  alternates: { canonical: "./" },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

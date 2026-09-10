@@ -15,6 +15,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { parseManifest, validateManifestFiles } from "@/lib/manifest";
+import { matchesTerms, rankByQuery, tokenize } from "@/lib/search";
 import {
   toSummary,
   type Catalog,
@@ -228,16 +229,12 @@ async function list(query: CatalogQuery = {}): Promise<CatalogPage> {
   const packages = loadAllPackages();
   let items: PackageSummary[] = packages.map(toSummary);
 
-  if (query.q) {
-    const q = query.q.toLowerCase();
-    items = items.filter(
-      (p) =>
-        p.title.toLowerCase().includes(q) ||
-        p.summary.toLowerCase().includes(q) ||
-        p.name.toLowerCase().includes(q) ||
-        p.owner.toLowerCase().includes(q) ||
-        p.tags.some((t) => t.toLowerCase().includes(q))
-    );
+  // Terms are ANDed across name/title/summary/owner/tags (a hyphenated tag like
+  // "code-review" also matches "review" from `q=code review`) — see B9a/B9c and
+  // the shared helper's own doc comment.
+  const terms = query.q ? tokenize(query.q) : [];
+  if (terms.length > 0) {
+    items = items.filter((p) => matchesTerms(terms, [p.title, p.summary, p.name, p.owner, ...p.tags]));
   }
   if (query.kind) items = items.filter((p) => p.kind === query.kind);
   if (query.runtime) items = items.filter((p) => p.runtimes.includes(query.runtime!));
@@ -246,26 +243,36 @@ async function list(query: CatalogQuery = {}): Promise<CatalogPage> {
   if (query.tag) items = items.filter((p) => p.tags.includes(query.tag!));
   if (query.owner) items = items.filter((p) => p.owner === query.owner);
 
-  // Default to "updated": this layer's counters are always zero (see loadPackage),
-  // so `withStats` re-sorts by the real numbers when sort is downloads/stars.
-  const sort = query.sort ?? "updated";
-  const sorted = [...items].sort((a, b) => {
-    switch (sort) {
-      case "stars":
-        return b.stats.stars - a.stats.stars || b.updatedAt.localeCompare(a.updatedAt);
-      case "name":
-        return a.name.localeCompare(b.name);
-      case "downloads":
-        return b.stats.downloads - a.stats.downloads || b.updatedAt.localeCompare(a.updatedAt);
-      case "updated":
-      default:
-        return b.updatedAt.localeCompare(a.updatedAt) || a.name.localeCompare(b.name);
-    }
-  });
+  let sorted: PackageSummary[];
+  if (terms.length > 0 && !query.sort) {
+    // No explicit sort and a search query: rank by relevance (exact name match,
+    // then name/title contains, then the rest) rather than plain recency.
+    sorted = rankByQuery(items, terms);
+  } else {
+    // Default to "updated": this layer's counters are always zero (see
+    // loadPackage), so `withStats` re-sorts by the real numbers when sort is
+    // downloads/stars.
+    const sort = query.sort ?? "updated";
+    sorted = [...items].sort((a, b) => {
+      switch (sort) {
+        case "stars":
+          return b.stats.stars - a.stats.stars || b.updatedAt.localeCompare(a.updatedAt);
+        case "name":
+          return a.name.localeCompare(b.name);
+        case "downloads":
+          return b.stats.downloads - a.stats.downloads || b.updatedAt.localeCompare(a.updatedAt);
+        case "updated":
+        default:
+          return b.updatedAt.localeCompare(a.updatedAt) || a.name.localeCompare(b.name);
+      }
+    });
+  }
 
   const total = sorted.length;
   const offset = query.offset ?? 0;
-  const limit = query.limit ?? 24;
+  // `query.limit` is always set by now — `parseCatalogQuery` defaults it, and
+  // internal callers pass CATALOG_ALL_LIMIT explicitly. No default here.
+  const limit = query.limit!;
   const page = sorted.slice(offset, offset + limit);
   return { items: page, total };
 }

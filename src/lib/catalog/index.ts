@@ -6,6 +6,8 @@
 
 import {
   CATALOG_ALL_LIMIT,
+  DEFAULT_PAGE_SIZE,
+  MAX_PAGE_SIZE,
   PACKAGE_KINDS,
   RUNTIME_IDS,
   type Catalog,
@@ -18,6 +20,7 @@ import {
 } from "@/lib/types";
 import { seedCatalog } from "@/lib/catalog/seed";
 import { getStats, statsKey, ZERO_STATS } from "@/lib/stats";
+import { rankByQuery, tokenize } from "@/lib/search";
 
 let catalogPromise: Promise<Catalog> | null = null;
 
@@ -98,14 +101,30 @@ function withStats(inner: Catalog): Catalog {
         });
         const decorated = await decorate(items);
         const key = query.sort;
+        // An explicit sort=downloads/stars always wins on the primary key, but
+        // when a search query is also present, break ties in relevance order
+        // (exact name match, then name/title contains, then the rest) rather
+        // than arbitrarily by date — same tiering as the unfiltered case, via
+        // the one shared helper in ./search.
+        const terms = query.q ? tokenize(query.q) : [];
+        const relevanceRank = new Map(
+          (terms.length > 0 ? rankByQuery(decorated, terms) : decorated).map((item, i) => [
+            item.id,
+            i,
+          ])
+        );
         decorated.sort(
           (a, b) =>
             b.stats[key] - a.stats[key] ||
+            relevanceRank.get(a.id)! - relevanceRank.get(b.id)! ||
             b.updatedAt.localeCompare(a.updatedAt) ||
             a.name.localeCompare(b.name)
         );
+        // `query.limit` is guaranteed by now: `parseCatalogQuery` defaults it for
+        // request-driven queries, and internal callers pass CATALOG_ALL_LIMIT
+        // explicitly for "everything" fetches. No per-layer default here.
         const offset = query.offset ?? 0;
-        const limit = query.limit ?? 24;
+        const limit = query.limit!;
         return { items: decorated.slice(offset, offset + limit), total };
       }
 
@@ -114,9 +133,13 @@ function withStats(inner: Catalog): Catalog {
     },
 
     async get(owner: string, name: string): Promise<Package | null> {
-      const pkg = await inner.get(owner, name);
+      // Independent lookups — run them concurrently rather than waiting on the
+      // package fetch before starting the stats query.
+      const [pkg, map] = await Promise.all([
+        inner.get(owner, name),
+        getStats([{ owner, name }]),
+      ]);
       if (!pkg) return null;
-      const map = await getStats([{ owner, name }]);
       return { ...pkg, stats: map.get(statsKey(owner, name)) ?? ZERO_STATS };
     },
 
@@ -173,11 +196,14 @@ export function parseCatalogQuery(searchParams: SearchParamsLike): CatalogQuery 
     query.sort = sort as CatalogQuery["sort"];
   }
 
+  // `limit` always ends up set — missing or bogus values fall back to
+  // DEFAULT_PAGE_SIZE, everything else is clamped to [1, MAX_PAGE_SIZE] — so
+  // every catalog layer can trust `query.limit` rather than inventing its own
+  // default (see DEFAULT_PAGE_SIZE/MAX_PAGE_SIZE in ./types).
   const limit = readParam(searchParams, "limit");
-  if (limit !== undefined) {
-    const n = Number(limit);
-    if (Number.isFinite(n) && n > 0) query.limit = Math.floor(n);
-  }
+  const parsedLimit = limit !== undefined ? Number(limit) : NaN;
+  const wholeLimit = Number.isFinite(parsedLimit) ? Math.floor(parsedLimit) : DEFAULT_PAGE_SIZE;
+  query.limit = Math.min(Math.max(wholeLimit, 1), MAX_PAGE_SIZE);
 
   const offset = readParam(searchParams, "offset");
   if (offset !== undefined) {
