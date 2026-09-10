@@ -4,7 +4,7 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { getCatalog } from "@/lib/catalog";
 import { auth } from "@/lib/auth";
-import { hasPurchased } from "@/lib/purchases";
+import { resolveAccess } from "@/lib/access";
 import { KindBadge } from "@/components/KindBadge";
 import { PricingBadge } from "@/components/PricingBadge";
 import { RuntimeChips } from "@/components/RuntimeChips";
@@ -61,14 +61,15 @@ export default async function PackagePage({
 
   const activeTab: TabId = (TABS.find((t) => t.id === rawTab)?.id ?? "readme");
   const { manifest } = pkg;
-  const isFree = manifest.pricing.model === "free" || manifest.pricing.amountCents === 0;
 
+  // Single access gate shared with the download route, the raw-file API, and the
+  // file-viewer page (B2) — `isFree`/`isOwner`/`owns` keep their old names so the
+  // rest of this component (including the BuyButton branch below) reads exactly
+  // as before.
   const session = await auth();
-  const isOwner = Boolean(session?.user?.handle && session.user.handle === owner);
-  const owns =
-    isFree ||
-    isOwner ||
-    (session?.user?.id ? await hasPurchased(session.user.id, owner, name) : false);
+  const access = await resolveAccess(pkg, session);
+  const { isFree, isOwner } = access;
+  const owns = access.canDownload;
 
   const starsEnabled = isDbEnabled();
   const starred = session?.user?.id ? await isStarred(session.user.id, owner, name) : false;
@@ -182,7 +183,9 @@ export default async function PackagePage({
 
           <div className="py-6">
             {activeTab === "readme" && <ReadmeTab readme={pkg.readme} />}
-            {activeTab === "files" && <FilesTab owner={owner} name={name} files={pkg.files} />}
+            {activeTab === "files" && (
+              <FilesTab owner={owner} name={name} files={pkg.files} canReadFile={access.canReadFile} />
+            )}
             {activeTab === "manifest" && <ManifestTab manifest={manifest} />}
             {activeTab === "versions" && <VersionsTab versions={pkg.versions} />}
           </div>
@@ -280,16 +283,35 @@ function ReadmeTab({ readme }: { readme: string }) {
   return <Markdown content={readme} />;
 }
 
-function FilesTab({
+async function FilesTab({
   owner,
   name,
   files,
+  canReadFile,
 }: {
   owner: string;
   name: string;
   files: { path: string; size: number }[];
+  canReadFile: (path: string) => boolean;
 }) {
-  if (files.length === 0) {
+  // The manifest's own file list never includes itself or the README (B15),
+  // even though both are always servable (they're the preview paths on a paid
+  // package) — surface them here so the manifest is discoverable from the
+  // Files tab instead of only by guessing the URL. Most DB-backed packages
+  // already store them as regular files; only add what's missing.
+  const wellKnown = ["openagent.yaml", "README.md"];
+  const missing = wellKnown.filter((p) => !files.some((f) => f.path === p));
+  let extra: { path: string; size: number }[] = [];
+  if (missing.length > 0) {
+    const catalog = await getCatalog();
+    const found = await Promise.all(missing.map((p) => catalog.getFile(owner, name, p)));
+    extra = found
+      .filter((f): f is NonNullable<typeof f> => f !== null)
+      .map((f) => ({ path: f.path, size: f.size }));
+  }
+  const allFiles = [...files, ...extra];
+
+  if (allFiles.length === 0) {
     return <p className="text-sm text-fg-muted">No files listed.</p>;
   }
   return (
@@ -302,19 +324,27 @@ function FilesTab({
           </tr>
         </thead>
         <tbody>
-          {files.map((file) => (
-            <tr key={file.path} className="border-b border-border last:border-0">
-              <td className="px-4 py-2">
-                <Link
-                  href={`/p/${owner}/${name}/files/${file.path}`}
-                  className="font-mono text-accent hover:text-accent-hover"
-                >
-                  {file.path}
-                </Link>
-              </td>
-              <td className="px-4 py-2 font-mono text-fg-subtle">{formatBytes(file.size)}</td>
-            </tr>
-          ))}
+          {allFiles.map((file) => {
+            const locked = !canReadFile(file.path);
+            return (
+              <tr key={file.path} className="border-b border-border last:border-0">
+                <td className="px-4 py-2">
+                  <Link
+                    href={`/p/${owner}/${name}/files/${file.path}`}
+                    className="font-mono text-accent hover:text-accent-hover"
+                  >
+                    {file.path}
+                  </Link>
+                  {locked && (
+                    <span className="ml-2 rounded border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-fg-subtle">
+                      Locked
+                    </span>
+                  )}
+                </td>
+                <td className="px-4 py-2 font-mono text-fg-subtle">{formatBytes(file.size)}</td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
