@@ -124,12 +124,12 @@ test("nextPosition: one past the highest existing position", () => {
 // ---------------------------------------------------------------------------
 
 test("buildInstallAllCommand: empty collection yields an empty string", () => {
-  assert.equal(buildInstallAllCommand([], "openagents"), "");
+  assert.equal(buildInstallAllCommand([], "openagents-cli"), "");
 });
 
 test("buildInstallAllCommand: one package", () => {
   assert.equal(
-    buildInstallAllCommand([{ owner: "openagents", name: "pr-reviewer" }], "openagents"),
+    buildInstallAllCommand([{ owner: "openagents", name: "pr-reviewer" }], "openagents-cli"),
     "npx openagents-cli add openagents/pr-reviewer"
   );
 });
