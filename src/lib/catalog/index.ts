@@ -19,6 +19,7 @@ import {
   type RuntimeId,
 } from "@/lib/types";
 import { seedCatalog } from "@/lib/catalog/seed";
+import { cached, CATALOG_CACHE_TTL_MS } from "@/lib/catalog/cache";
 import { getStats, statsKey, ZERO_STATS } from "@/lib/stats";
 import { rankByQuery, tokenize } from "@/lib/search";
 
@@ -58,13 +59,68 @@ async function buildCatalog(): Promise<Catalog> {
       createDbCatalog?: (seed: Catalog) => Catalog;
     };
     if (typeof mod.createDbCatalog === "function") {
-      base = mod.createDbCatalog(seedCatalog);
+      // Caching only applies to the DB catalog — the seed catalog already
+      // reads from an in-memory structure built once at startup, so wrapping
+      // it here would add bookkeeping for no benefit.
+      base = withCatalogCache(mod.createDbCatalog(seedCatalog));
     }
   } catch {
     // "./db" doesn't exist yet, failed to import, or failed to construct —
     // fall back to the always-available seed catalog.
   }
   return withStats(base);
+}
+
+/** Stable JSON key for a `CatalogQuery` — sorted keys and `undefined` values
+ *  dropped, so two calls that mean the same query (regardless of how their
+ *  optional fields were populated) hit the same cache entry. */
+function queryCacheKey(prefix: string, query: CatalogQuery): string {
+  const sorted: Record<string, unknown> = {};
+  for (const key of Object.keys(query).sort()) {
+    const value = (query as Record<string, unknown>)[key];
+    if (value !== undefined) sorted[key] = value;
+  }
+  return `${prefix}:${JSON.stringify(sorted)}`;
+}
+
+/**
+ * Wraps the DB catalog's `list`/`tags`/`facets`/`featured` in the in-memory
+ * TTL cache from `./cache` (Y8). `get`/`getFile`/`creator` are single-item
+ * lookups (package pages, file downloads, creator pages) that don't share
+ * this catalog's "list everything" cost profile and are left uncached.
+ *
+ * `includeHidden` queries (the owner's own pending/unlisted packages, the
+ * moderation queue) bypass the cache entirely rather than being cached under
+ * their own key — they're low-traffic, viewer-specific in effect, and a
+ * stale hit here would show an owner a package that no longer matches its
+ * real status right after they changed it.
+ */
+function withCatalogCache(inner: Catalog): Catalog {
+  return {
+    async list(query: CatalogQuery = {}): Promise<CatalogPage> {
+      if (query.includeHidden) return inner.list(query);
+      return cached(queryCacheKey("list", query), CATALOG_CACHE_TTL_MS, () => inner.list(query));
+    },
+    get: inner.get,
+    getFile: inner.getFile,
+    creator: inner.creator,
+    async tags(): Promise<{ tag: string; count: number }[]> {
+      return cached("tags", CATALOG_CACHE_TTL_MS, () => inner.tags());
+    },
+    facets: inner.facets
+      ? (query: CatalogQuery = {}) => {
+          if (query.includeHidden) return inner.facets!(query);
+          return cached(queryCacheKey("facets", query), CATALOG_CACHE_TTL_MS, () =>
+            inner.facets!(query)
+          );
+        }
+      : undefined,
+    async featured(limit?: number): Promise<PackageSummary[]> {
+      return cached(queryCacheKey("featured", { limit }), CATALOG_CACHE_TTL_MS, () =>
+        inner.featured(limit)
+      );
+    },
+  };
 }
 
 /**

@@ -8,7 +8,14 @@
 
 import { and, eq, gte, ilike, inArray, ne, or, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
-import { downloadEvents, packageFiles, packages, packageVersions, users } from "@/lib/db/schema";
+import {
+  downloadEvents,
+  packageFiles,
+  packages,
+  packagesFtsExpression,
+  packageVersions,
+  users,
+} from "@/lib/db/schema";
 import {
   buildCorrectedQuery,
   buildVocabulary,
@@ -164,12 +171,12 @@ type FacetDimension = "kind" | "runtime" | "price" | "tag" | "owner";
  * mid-word/partial match (e.g. "revie") still hits, since `websearch_to_
  * tsquery` only matches whole lexemes.
  *
- * No new index for this: at this catalog's size (dozens to low hundreds of
- * rows) a sequential scan computing `to_tsvector` per row is sub-millisecond
- * and not worth the maintenance cost of a functional GIN index. Once the
- * catalog is large enough for this to show up in query time, add
- * `CREATE INDEX ... USING GIN (to_tsvector('english', ...))` as a follow-up
- * migration and this expression stays byte-for-byte compatible with it.
+ * G-O5: the `to_tsvector(...)` side is built by `packagesFtsExpression`,
+ * shared verbatim with the `packages_fts_idx` GIN index in db/schema.ts, so
+ * the planner can actually use that index — Postgres only matches a
+ * functional index when the query expression is byte-for-byte identical to
+ * the indexed one. Never reconstruct this expression by hand here; always
+ * call the shared function.
  *
  * Final cross-source ordering (seed + DB merged) is unified by the shared JS
  * scorer in search.ts (`rankByQuery`/`scoreDocument`) once rows are merged —
@@ -177,13 +184,7 @@ type FacetDimension = "kind" | "runtime" | "price" | "tag" | "owner";
  * here; this condition only widens *which* rows match.
  */
 function tsMatchCondition(q: string) {
-  return sql`to_tsvector('english',
-      coalesce(${packages.title}, '') || ' ' ||
-      coalesce(${packages.summary}, '') || ' ' ||
-      ${packages.name} || ' ' ||
-      ${packages.owner} || ' ' ||
-      coalesce((SELECT string_agg(t, ' ') FROM jsonb_array_elements_text(${packages.tags}) t), '')
-    ) @@ websearch_to_tsquery('english', ${q})`;
+  return sql`${packagesFtsExpression(packages)} @@ websearch_to_tsquery('english', ${q})`;
 }
 
 /** Builds the merged `WHERE` clause for a catalog query. Each search term is
