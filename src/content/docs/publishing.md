@@ -37,10 +37,10 @@ This path has no fee — free packages don't go through Stripe at all.
 
 ## Paid packages — hosted publish flow
 
-Packages with a price (`pricing.model` of `one-time`; `subscription` is reserved but
-not yet accepted — see [Package Format](/docs/package-format)) are published through
-the hosted flow rather than a PR, since they need an account and a way to receive
-payment.
+Packages with a price (`pricing.model` of `one-time` or `subscription` — see
+[Package Format](/docs/package-format) and [Subscriptions](#subscriptions) below)
+are published through the hosted flow rather than a PR, since they need an account
+and a way to receive payment.
 
 1. Sign in with GitHub or Google at `/publish` (requires the deployment to have
    `AUTH_SECRET` plus at least one provider's client id/secret configured — see
@@ -191,6 +191,74 @@ changelog, is shown on the package's detail page (`/p/[owner]/[name]`).
 
 ## Subscriptions
 
-`pricing.model: subscription` is planned, not yet accepted — the registry rejects it
-today (see [Package Format](/docs/package-format)). Publish as `one-time` in the
-meantime.
+`pricing.model: subscription` is a real, third pricing model alongside `free` and
+`one-time` — set `pricing.interval` to `month` or `year` (required for a subscription
+manifest; see [Package Format](/docs/package-format)) and publish through the same
+hosted flow as a one-time paid package.
+
+Checkout runs in Stripe's subscription mode instead of a single charge: the buyer
+gets a Stripe Customer (reused across every subscription they hold), and the
+platform fee is taken via `application_fee_percent` on the subscription itself, so
+it applies to **every renewal**, not just the first payment — the seller's connected
+account receives the remainder on each billing cycle the same way it would for a
+one-time sale. A buyer's access lasts until `expiresAt` (the current billing
+period's end), which rolls forward automatically on each successful renewal
+(`invoice.paid`) and is left alone if a renewal charge fails outright — access only
+actually ends when Stripe reports the subscription itself as canceled
+(`customer.subscription.deleted`), typically after Stripe's own retry schedule is
+exhausted. See [API Reference](/docs/api#post-apicheckout) for the full webhook
+event list.
+
+A subscriber manages their own subscription — updating a card, canceling, seeing the
+next renewal date — through Stripe's hosted **billing portal**, reached via
+[`POST /api/billing/portal`](/docs/api#post-apibillingportal). [`/purchases`](/purchases)
+shows each subscription's renewal or end date next to a **Manage** button that opens
+that portal; it shows the equivalent purchase date for one-time purchases.
+
+`openagents publish`/`validate` and the manifest schema all accept `pricing.interval`
+today — see [CLI Reference](/docs/cli) and [Package Format](/docs/package-format).
+
+## Binary files
+
+A paid or free package can ship binary files (an icon, a small compiled asset) in
+addition to text — see [Package Format](/docs/package-format#binary-files) for the
+full `encoding`/`mode` fields and size cap (2 MB total across all binary files, on
+top of the existing text limits). `openagents publish` packs these automatically —
+you don't need to base64-encode anything by hand — and preserves the POSIX
+executable bit for scripts when publishing from a POSIX machine. The raw file route
+serves a binary file with its real content type: images render inline; anything
+else downloads as an attachment.
+
+## GitHub auto-sync
+
+Beyond a one-off `--from-github` import (above), a package can be **linked** to a
+GitHub repository so a new release (or tag push) republishes it automatically —
+no need to run `openagents publish` again for every update.
+
+1. From [`/settings/sources`](/settings/sources), or directly via
+   [`PUT /api/v1/packages/{owner}/{name}/source`](/docs/api#putgetdelete-apiv1packagesownernamesource),
+   link the package to `{repo, ref?, subdir?}`.
+2. The response includes a webhook URL (`/api/webhooks/github/{id}`) and a secret,
+   shown exactly once — add both to the GitHub repository's webhook settings
+   (Settings → Webhooks → Add webhook), subscribed to the **release** event (and,
+   optionally, tag pushes).
+3. Publishing a GitHub release (or pushing a matching tag) fires the webhook, which
+   imports the manifest at that ref/subdir and publishes a new version — but only
+   when its `version` is strictly greater than the currently published one, so a
+   re-delivered webhook or an out-of-order release never double-publishes.
+4. `POST .../source/sync` triggers the same check on demand, without waiting for a
+   webhook — useful right after linking a repo that already has releases.
+
+This goes through the exact same validation, file limits, and `REQUIRE_REVIEW`
+behavior as any other publish path.
+
+## Collections for curation
+
+Once a package is live, it can be added to **collections** — curated, ordered lists
+a creator (or an admin, editorially) puts together, e.g. "everything you need for PR
+review." See [API Reference](/docs/api#collections) for the full CRUD; from the UI,
+use "Add to collection" on a package's own page, or start a new one at
+[`/collections/new`](/collections/new). A public collection appears on
+[`/collections`](/collections), at `/c/{handle}/{slug}`, in the landing page's
+collections rail, and in the sitemap; an unlisted one is reachable only by direct
+link, the same visibility model as an unlisted package.

@@ -207,7 +207,9 @@ openagents info openagents/pr-reviewer --json
 
 Prints the full manifest — kind, license, tags, runtimes, pricing, entry file, file
 list, declared inputs — plus download/star stats. For a paid package, also prints the
-package's page URL to buy it. `--json` prints the raw package response instead.
+package's page URL to buy it. A `pricing.model: subscription` package prints its
+price as `$9.00/month` (or `/year`) instead of a flat one-time amount. `--json`
+prints the raw package response instead, including `pricing.interval` when present.
 
 ## `openagents init`
 
@@ -272,6 +274,21 @@ version-must-increase), which only the server enforces at publish time.
 Exits with a non-zero status and a list of issues if anything fails; prints a one-line
 confirmation (kind, entry, file count) on success.
 
+## Binary files
+
+`openagents publish`/`--dry-run` detects binary files in a package directory by
+content (not just extension) and packs them automatically — no manual base64
+step. Each binary file is sent as `{ path, content: <base64>, encoding: "base64",
+mode }`, where `mode` is `493` (`0o755`) if the file's executable bit is set on
+disk, `420` (`0o644`) otherwise. Executable-bit detection reads the real POSIX
+mode and only works on POSIX (macOS/Linux); Windows has no equivalent bit to read,
+so files packed from Windows always publish as `mode: 420` — set it another way if
+a script genuinely needs to be executable after install on POSIX. `openagents add`
+extracts a downloaded tarball preserving each file's `mode`, so an executable
+script stays executable after install without an extra `chmod`. See
+[Package Format](/docs/package-format#binary-files) for the registry's 2 MB
+binary-total cap and [API Reference](/docs/api) for the wire format.
+
 ## `openagents publish [dir]`
 
 ```bash
@@ -304,6 +321,10 @@ for when to use which path.)
 
 `status: "pending"` means the registry has `REQUIRE_REVIEW` on and this was a
 brand-new package — see [Publishing](/docs/publishing#review-mode-require_review1).
+`--dry-run`'s pre-flight summary shows price as `free`, a flat amount (`$5.00`), or
+`$9.00/month`/`/year` for a `pricing.model: subscription` package, and calls out how
+many of the packed files are binary (see [Binary files](#binary-files) above) when
+any are.
 
 ## Lockfile: `.openagents/installed.json`
 
