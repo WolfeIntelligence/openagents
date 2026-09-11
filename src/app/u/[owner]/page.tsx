@@ -64,20 +64,21 @@ export default async function CreatorPage({
   // a seed owner's `owner.json` "url"), so read it directly here too, same as
   // `/api/v1/users/[handle]`.
   let website: string | null = creator.url ?? null;
-  // `users` has no `createdAt` column (out of scope here — schema is owned by
-  // another workstream), so there's no real join date to show yet. Kept as a
-  // variable rather than inlining `null` so the JSX below doesn't need to
-  // change once one exists.
-  const joinedAt: string | null = null;
+  // Likewise for `users.createdAt` — seed catalog owners (owner.json on disk) have
+  // no signup date at all, so this stays null for them.
+  let joinedAt: string | null = null;
   const db = getDb();
   if (db) {
     try {
       const [row] = await db
-        .select({ website: users.website })
+        .select({ website: users.website, createdAt: users.createdAt })
         .from(users)
         .where(eq(users.handle, owner))
         .limit(1);
       if (row?.website) website = row.website;
+      if (row?.createdAt) {
+        joinedAt = row.createdAt.toLocaleDateString(undefined, { year: "numeric", month: "short" });
+      }
     } catch {
       // Fall back to whatever the seed catalog provided.
     }
