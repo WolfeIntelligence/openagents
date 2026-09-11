@@ -100,9 +100,10 @@ export default function PricingPage() {
             platform fee + Stripe fees, creators keep ~{CREATOR_PERCENT}%
           </p>
           <ul className="mt-4 flex flex-col gap-2 text-sm text-fg-muted">
-            <li>• One-time pricing (subscriptions planned)</li>
-            <li>• Stripe Connect payouts</li>
-            <li>• Buy button on the package page</li>
+            <li>• One-time pricing, or a subscription billed monthly or yearly</li>
+            <li>• The platform fee applies to every charge — including each subscription renewal, not just the first</li>
+            <li>• Stripe Connect payouts: sellers connect an account once, then get paid automatically</li>
+            <li>• Buy (or Subscribe) button on the package page</li>
             <li>• Same distribution as free packages</li>
           </ul>
           <p className="mt-4 text-xs font-medium text-fg-subtle">

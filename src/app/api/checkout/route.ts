@@ -33,15 +33,13 @@ export async function POST(req: NextRequest) {
   if (pricing.model === "free") {
     return NextResponse.json({ error: "package is free" }, { status: 400 });
   }
-  if (pricing.model === "subscription") {
-    return NextResponse.json(
-      { error: "subscription pricing is not available yet" },
-      { status: 400 }
-    );
-  }
   if (session.user.handle && session.user.handle === pkg.owner) {
     return NextResponse.json({ error: "you own this package" }, { status: 400 });
   }
+  // `hasPurchased` only counts a *currently active* purchase (see isPurchaseActive in
+  // src/lib/purchases.ts) — a subscriber whose period already lapsed reads as `false`
+  // here and can start a new Checkout Session to re-subscribe, while an active
+  // subscriber is blocked from buying (subscribing to) the same package twice.
   if (await hasPurchased(session.user.id, pkg.owner, pkg.name)) {
     return NextResponse.json({ error: "you already own this package" }, { status: 400 });
   }

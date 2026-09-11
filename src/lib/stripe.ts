@@ -52,10 +52,48 @@ export interface CreateCheckoutSessionArgs {
   cancelUrl: string;
 }
 
-/** Creates a one-time Stripe Checkout Session for a paid package, routing funds to the
- *  seller's connected account via a destination charge (transfer_data.destination) minus
- *  the platform's application_fee_amount. Throws if Stripe/DB aren't configured or the
- *  seller hasn't completed Connect onboarding. */
+type Db = NonNullable<ReturnType<typeof getDb>>;
+
+/** Returns the buyer's Stripe Customer id, creating one (with their account email) the
+ *  first time they check out for a subscription and persisting it to `users.
+ *  stripeCustomerId` so every later subscription reuses the same Customer — that's
+ *  what lets the billing portal (`/api/billing/portal`) show every subscription a
+ *  buyer has across every seller, not just one. One-time purchases don't need this:
+ *  Stripe is fine minting an ad-hoc Customer per payment, and there's no portal or
+ *  renewal that would ever need to find it again. */
+async function ensureStripeCustomer(stripe: Stripe, db: Db, buyerUserId: string): Promise<string> {
+  const [buyer] = await db.select().from(users).where(eq(users.id, buyerUserId)).limit(1);
+  if (!buyer) throw new Error("buyer not found");
+  if (buyer.stripeCustomerId) return buyer.stripeCustomerId;
+
+  const customer = await stripe.customers.create({ email: buyer.email ?? undefined });
+  await db.update(users).set({ stripeCustomerId: customer.id }).where(eq(users.id, buyerUserId));
+  return customer.id;
+}
+
+/**
+ * Reads a Subscription's paid-through date. Stripe's API moved `current_period_end`
+ * off the Subscription object and onto each line item — see `current_period_end` in
+ * node_modules/stripe/cjs/resources/SubscriptionItems.d.ts, and its absence from
+ * Subscriptions.d.ts's own `interface Subscription` — so retrieving it from the
+ * subscription itself (as older Stripe integrations do) silently reads `undefined`
+ * instead of throwing. Every package sells exactly one price per subscription, so the
+ * first (only) item's period end is what "paid through" means for the purchase row.
+ * Null only if Stripe ever returns a subscription with no items at all.
+ */
+export function subscriptionPeriodEnd(subscription: Stripe.Subscription): Date | null {
+  const item = subscription.items.data[0];
+  return item ? new Date(item.current_period_end * 1000) : null;
+}
+
+/** Creates a Stripe Checkout Session for a paid package — `mode: "payment"` for a
+ *  one-time purchase, `mode: "subscription"` for a recurring one — routing funds to
+ *  the seller's connected account via a destination charge/transfer
+ *  (`transfer_data.destination`) minus the platform's cut (`application_fee_amount`
+ *  for a one-time charge, `application_fee_percent` for a subscription, since a
+ *  subscription's charge amount isn't known up front the way a one-time price is).
+ *  Throws if Stripe/DB aren't configured or the seller hasn't completed Connect
+ *  onboarding. */
 export async function createCheckoutSession({
   pkg,
   buyerUserId,
@@ -83,11 +121,54 @@ export async function createCheckoutSession({
     throw new Error(`package ${pkg.id} is not purchasable (not a DB-backed package)`);
   }
 
-  const amountCents = pkg.manifest.pricing.amountCents;
-  const currency = pkg.manifest.pricing.currency;
+  const { pricing } = pkg.manifest;
+  const amountCents = pricing.amountCents;
+  const currency = pricing.currency;
   if (!isSupportedCurrency(currency)) {
     throw new Error(`package ${pkg.id} has an unsupported currency: ${currency}`);
   }
+
+  if (pricing.model === "subscription") {
+    const customerId = await ensureStripeCustomer(stripe, db, buyerUserId);
+    const metadata = {
+      packageId: dbPackage.id,
+      owner: pkg.owner,
+      name: pkg.name,
+      buyerUserId,
+      kind: "subscription",
+    };
+
+    const session = await stripe.checkout.sessions.create({
+      mode: "subscription",
+      customer: customerId,
+      line_items: [
+        {
+          price_data: {
+            currency,
+            unit_amount: amountCents,
+            recurring: { interval: pricing.interval ?? "month" },
+            product_data: {
+              name: pkg.manifest.title,
+              description: pkg.manifest.summary,
+            },
+          },
+          quantity: 1,
+        },
+      ],
+      subscription_data: {
+        application_fee_percent: PLATFORM_FEE_BPS / 100,
+        transfer_data: { destination: seller.stripeAccountId },
+        metadata,
+      },
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+      metadata,
+    });
+
+    if (!session.url) throw new Error("stripe did not return a checkout url");
+    return { url: session.url };
+  }
+
   const applicationFeeAmount = platformFeeCents(amountCents);
 
   const session = await stripe.checkout.sessions.create({
@@ -117,6 +198,7 @@ export async function createCheckoutSession({
       name: pkg.name,
       buyerUserId,
       currency,
+      kind: "one-time",
     },
   });
 

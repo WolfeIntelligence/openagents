@@ -1,11 +1,5 @@
 import type { Pricing } from "@/lib/types";
-import { formatPrice } from "@/lib/format";
-
-function formatPricingLabel(pricing: Pricing): string {
-  if (pricing.model === "free" || pricing.amountCents === 0) return "Free";
-  const amount = formatPrice(pricing.amountCents, pricing.currency);
-  return pricing.model === "subscription" ? `${amount}/mo` : amount;
-}
+import { formatPricing } from "@/lib/format";
 
 export function PricingBadge({
   pricing,
@@ -23,7 +17,7 @@ export function PricingBadge({
           : "border-accent-border bg-accent-muted text-accent"
       } ${className}`}
     >
-      {formatPricingLabel(pricing)}
+      {formatPricing(pricing)}
     </span>
   );
 }
