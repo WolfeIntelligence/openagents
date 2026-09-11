@@ -31,9 +31,10 @@ license: MIT                 # SPDX id, or "proprietary" for paid
 tags: [code-review, github, quality]
 runtimes: [claude-code, cursor, codex, generic]   # see Runtime list
 pricing:
-  model: free                # free | one-time (subscription is reserved, not yet accepted)
-  amount_cents: 0            # required when not free
+  model: free                # free | one-time | subscription
+  amount_cents: 0            # required when not free; for subscription, the amount per interval
   currency: usd              # 3-letter lowercase ISO 4217, must be Stripe-supported
+  # interval: month           # required when model is subscription: month | year
 entry: WORKFLOW.md           # main file an agent reads first
 files:                       # every shipped file, relative paths
   - WORKFLOW.md
@@ -62,12 +63,19 @@ The install target layout per runtime is defined in `src/lib/runtimes.ts` and ma
   - `seed` implementation: reads packages from `/catalog/<owner>/<name>/` on disk at build time (free, bundled packages). Always available.
   - `db` implementation: Drizzle ORM + Postgres (Neon / Vercel Postgres). Enabled when `DATABASE_URL` is set. Merges DB packages with seed packages.
 - **Auth**: Auth.js v5, GitHub and Google providers, each independently enabled once its own client id/secret plus `AUTH_SECRET` exist; otherwise sign-in UI shows a "not configured" state. Never crash without env.
-- **Payments**: Stripe Connect, connected accounts created with **Stripe Accounts v2** (`stripe.v2.core.accounts`, not the legacy v1 Express `stripe.accounts.create`). Platform fee = `PLATFORM_FEE_BPS` (default 1000 = 10%). Enabled only when `STRIPE_SECRET_KEY` exists. Checkout route + webhook route exist and return 503 when disabled. Paid packages are gated file-by-file: only `README.md` and `openagent.yaml` are readable pre-purchase; every other file and the tarball download return 402 for a non-owner who hasn't bought it.
-- **Distribution**: packages are downloadable as a tarball (`/api/v1/packages/{owner}/{name}/download`, or pinned to a version via `.../versions/{version}/download`) and installable with the CLI (`npx openagents add owner/name[@version|@range]`), which resolves `requires` transitively and checks tarball integrity against `X-Checksum-Sha256`.
+- **Payments**: Stripe Connect, connected accounts created with **Stripe Accounts v2** (`stripe.v2.core.accounts`, not the legacy v1 Express `stripe.accounts.create`). Platform fee = `PLATFORM_FEE_BPS` (default 1000 = 10%), taken on every charge including **subscription renewals** via `application_fee_percent`. Pricing models: `free`, `one-time`, and `subscription` (billed `month` or `year`, `pricing.interval`). Enabled only when `STRIPE_SECRET_KEY` exists. Checkout route, the billing portal (`POST /api/billing/portal`, for a subscriber to update/cancel), and the webhook route exist and return 503 when disabled. A subscription purchase's access lasts until `purchases.expiresAt` (the current billing period end), advanced by `invoice.paid` and ended by `customer.subscription.deleted`. Paid packages are gated file-by-file: only `README.md` and `openagent.yaml` are readable pre-purchase; every other file and the tarball download return 402 for a non-owner/non-subscriber.
+- **Distribution**: packages are downloadable as a tarball (`/api/v1/packages/{owner}/{name}/download`, or pinned to a version via `.../versions/{version}/download`) and installable with the CLI (`npx openagents add owner/name[@version|@range]`), which resolves `requires` transitively and checks tarball integrity against `X-Checksum-Sha256`. A package's files may include binary content (`encoding: "base64"`, an optional POSIX `mode`), capped at 2MB total binary content per submission; the tarball preserves each file's mode.
 - **Auth tokens**: personal access tokens (`oa_` + 40 hex, `Authorization: Bearer`), scoped `read`/`publish`/`star`/`download`, managed at `/settings/tokens` and `/api/v1/tokens`. A session is equivalent to holding every scope. Publish/star/paid-download routes accept either.
 - **Lifecycle & moderation**: a package's `status` is `pending` (only with `REQUIRE_REVIEW=1`, owner/admin-only until approved) → `live` → optionally `unlisted` (hidden from listings, still installable by URL) or `deprecated` (listed with a banner, CLI warns). Owner/admin change status via `/api/v1/packages/{owner}/{name}/status`; anyone can report a package (`.../report`, anonymous allowed); admins (`users.isAdmin` or `ADMIN_HANDLES`) work the queue at `/admin`.
 - **Reviews**: one star rating (1–5) + optional text per user per package (`/api/v1/packages/{owner}/{name}/reviews`, GET/PUT upsert/DELETE); owners can't review their own package; `package_stats.ratingAverage`/`ratingCount` are derived from this table.
-- **Analytics**: per-package download/star/rating stats (`/api/v1/packages/{owner}/{name}/stats`) backed by `download_events` — one row per (package, salted daily client hash, UTC day), so repeat installs from one machine in a day count once. Feeds the seller `/dashboard`.
+- **Analytics**: per-package download/star/rating stats (`/api/v1/packages/{owner}/{name}/stats`) backed by `download_events` — one row per (package, salted daily client hash, UTC day), so repeat installs from one machine in a day count once. Feeds the seller `/dashboard`. In DB mode, catalog list/tags/facets responses are cached 60s per instance.
+- **Collections**: curated, ordered lists of packages (`collections`/`collection_items` tables), owned by a user, public or unlisted, optionally editorially `featured` by an admin. CRUD under `/api/v1/collections`; pages at `/collections`, `/collections/new`, `/c/{handle}/{slug}`.
+- **GitHub auto-sync**: a package can be linked to a repo (`package_sources` table) via `/api/v1/packages/{owner}/{name}/source`; a `release`/tag-push webhook at `/api/webhooks/github/{id}` (verified by a per-source secret, falling back to `SOURCE_WEBHOOK_KEY`/`AUTH_SECRET`) republishes it when the manifest version is greater.
+- **Rate limiting**: durable, Postgres-backed (`rate_limits` table) fixed-window counters shared across serverless instances when `DATABASE_URL` is set, falling back to the prior in-memory/per-instance limiter otherwise.
+- **Content-Security-Policy**: enforced (not report-only), with a per-request nonce threaded onto every server-rendered `<script>` tag; creator READMEs render via `react-markdown` with raw HTML disabled.
+- **Email notifications**: purchase/sale/report/status emails via Resend (`RESEND_API_KEY`, `EMAIL_FROM`, `ADMIN_EMAIL`), routed through `src/lib/notify.ts`; a no-op without the key.
+- **Account controls**: `GET /api/v1/account/export` (full JSON export), `DELETE /api/v1/account` (session-only, blocked while owning packages with sales or holding an active subscription).
+- **Sharing/SEO**: per-package/creator OG images, `GET /api/v1/packages/{owner}/{name}/badge` (SVG), `SoftwareSourceCode` JSON-LD, `/feed.xml` RSS.
 - Everything must build and run with **zero env vars** set (seed catalog only). This is the deploy target for v0.1.
 
 ## Shared types
@@ -84,7 +92,11 @@ All code imports domain types from `src/lib/types.ts` (authoritative, do not red
 | `/p/[owner]/[name]/files/[...path]`            | raw file viewer                                             |
 | `/u/[owner]`                                   | creator profile + their packages                            |
 | `/publish`                                     | how to publish; upload form (DB mode) or CLI instructions   |
-| `/purchases`                                   | signed-in buyer's purchase history                           |
+| `/purchases`                                   | signed-in buyer's purchase history, with renewal/end dates and a Manage button for subscriptions |
+| `/collections`, `/collections/new`             | browse curated collections; create a new one                 |
+| `/c/[handle]/[slug]`                           | one collection: items, notes, "copy install-all" command      |
+| `/settings/sources`                            | signed-in seller's linked GitHub package sources               |
+| `/settings/account`                            | export or delete the signed-in user's account                 |
 | `/settings/payouts`                            | signed-in seller's Connect status, revenue, payouts          |
 | `/settings/tokens`                             | signed-in user's personal access tokens                      |
 | `/settings/profile`                            | signed-in user's editable profile                             |
@@ -120,10 +132,23 @@ All code imports domain types from `src/lib/types.ts` (authoritative, do not red
 | `/api/v1/tags`                                 | GET every tag in use, with counts                              |
 | `/api/v1/search?q=`                            | GET search (typo correction via `correctedQuery`)              |
 | `/api/v1/openapi`                              | GET the OpenAPI 3.1 document (also served statically at `/openapi.json`) |
+| `/api/v1/collections`                          | GET list (`featured`, `owner`, `limit`, `offset`), POST create (session or `publish`-scoped token) |
+| `/api/v1/collections/[handle]/[slug]`          | GET/PATCH/DELETE one collection + items                       |
+| `/api/v1/collections/[handle]/[slug]/items/[owner]/[name]` | PUT add/reorder/annotate, DELETE remove an item        |
+| `/api/v1/admin/collections/[handle]/[slug]`    | POST toggle `featured` (admin only)                            |
+| `/api/v1/packages/[owner]/[name]/badge`        | GET SVG badge, `?type=version\|downloads\|stars\|rating`      |
+| `/api/v1/packages/[owner]/[name]/source`       | PUT/GET/DELETE link/read/unlink a GitHub source                |
+| `/api/v1/packages/[owner]/[name]/source/sync`  | POST trigger a sync now                                        |
+| `/api/webhooks/github/[id]`                    | POST GitHub release/tag-push receiver for one linked source    |
+| `/api/v1/account/export`                       | GET the signed-in user's full data export (JSON download)      |
+| `/api/v1/account`                              | DELETE the signed-in user's account (`{confirm: handle}`)       |
+| `/p/[owner]/[name]/opengraph-image`, `/u/[owner]/opengraph-image` | GET generated OG image                        |
+| `/feed.xml`                                    | GET RSS feed of newly published/updated packages                |
 | `/api/auth/[...nextauth]`                      | Auth.js (GitHub, Google)                                     |
-| `/api/checkout`                                | POST create Stripe Checkout session (503 if disabled)       |
+| `/api/checkout`                                | POST create Stripe Checkout session, one-time or subscription mode (503 if disabled) |
+| `/api/billing/portal`                          | POST create a Stripe billing portal session for a subscriber (session required) |
 | `/api/connect/onboard`                         | POST create a Stripe Connect onboarding link (auth required) |
-| `/api/webhooks/stripe`                         | POST Stripe webhook (503 if disabled)                       |
+| `/api/webhooks/stripe`                         | POST Stripe webhook, incl. `invoice.paid`/`invoice.payment_failed`/`customer.subscription.updated`/`customer.subscription.deleted` (503 if disabled) |
 
 ## Directory layout
 
@@ -143,6 +168,8 @@ src/lib/stripe.ts                        # stripe client (env-gated)
 src/lib/requester.ts                     # session-or-token auth for /api/v1 routes
 src/instrumentation.ts                   # Next.js instrumentation hook (onRequestError -> monitoring)
 src/lib/monitoring.ts                    # captureError(): stderr always, Sentry when SENTRY_DSN is set
+src/lib/notify.ts                        # fire-and-forget notification hooks called by route handlers
+src/lib/email.ts                         # Resend-backed email sending (no-op without RESEND_API_KEY)
 public/openapi.json                      # OpenAPI 3.1 document for every /api/v1 route (+ checkout/webhook/connect)
 src/content/docs/*.md                    # docs pages
 ```

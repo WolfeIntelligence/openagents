@@ -52,9 +52,18 @@ the full install-directory table and how each runtime picks the files up.
 - **Web**: [`/explore`](/explore) — filter by kind, runtime, price, and search text.
 - **API**: `GET /api/v1/search?q=code+review` — see [API Reference](/docs/api).
 - **CLI**: `npx openagents search "code review"`.
+- **Collections**: [`/collections`](/collections) — curated, ordered lists of
+  packages someone put together around a theme ("everything for PR review"), each
+  with a one-paste "copy install-all" command; see
+  [Publishing](/docs/publishing#collections-for-curation).
+- **RSS**: [`/feed.xml`](/feed.xml) for newly published/updated packages, if you'd
+  rather watch the catalog from a feed reader than check back on `/explore`.
 
 Each package's detail page (`/p/<owner>/<name>`) shows its README, full manifest, file
-tree, and version history before you install anything.
+tree, and version history before you install anything. A creator can also embed
+status badges (version, downloads, stars, rating) from
+`GET /api/v1/packages/{owner}/{name}/badge` in their own README or site — see
+[API Reference](/docs/api#badges).
 
 ## Understand what you're installing
 

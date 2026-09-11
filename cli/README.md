@@ -226,17 +226,66 @@ openagents publish --from-github https://github.com/me/my-package \
 ```
 
 Validates the package directory exactly as `openagents validate` does, reads
-`openagent.yaml`, `README.md`, and every file `openagent.yaml` lists (UTF-8
-only — binary files are rejected), enforces the registry's limits client-side
-(≤200 files, ≤512KB per file, ≤2MB total) so a bad publish fails locally
+`openagent.yaml`, `README.md`, and every file `openagent.yaml` lists, enforces
+the registry's limits client-side (≤200 files, ≤512KB per file, ≤2MB total text,
+≤2MB total binary — see **Binary files** below) so a bad publish fails locally
 instead of after an upload, then prints a summary:
 
 ```
 zach/my-package@1.2.0
   kind:  workflow
-  files: 4 (6.1KB total)
-  price: free
+  files: 4 (6.1KB total, 1 binary)
+  price: $9.00/month
 ```
+
+`price` reads `free`, a flat amount (`$5.00`), or `$9.00/month`/`$90.00/year` for a
+`pricing.model: subscription` package (see **Subscriptions** below) — the CLI reads
+`pricing.interval` straight from `openagent.yaml`. The `files` line only mentions a
+binary count when the package actually ships one.
+
+### Binary files
+
+A package can include binary files (images, small compiled assets, an icon) as well
+as text. `openagents validate`/`publish` detect them by content, not extension, and
+handle them differently from text files:
+
+- Each binary file is packed as `{ path, content: <base64>, encoding: "base64",
+  mode }` instead of raw UTF-8 text.
+- `mode` is `493` (`0o755`) when the file's executable bit is set on disk, `420`
+  (`0o644`) otherwise — read via `fs.statSync(...).mode` on POSIX (macOS/Linux).
+  Windows has no equivalent bit to expose, so a file packed from Windows always
+  gets `mode: 420`; if it genuinely needs to run as a script after install on
+  POSIX, set the bit some other way before publishing from a POSIX machine, or
+  publish from one directly.
+- The registry caps binary files at **2MB total** across a submission, tracked
+  separately from (and in addition to) the existing 2MB total-text cap — a
+  package can use its full text budget and its full binary budget at once.
+- `openagents add` extracts a downloaded tarball preserving each file's `mode`, so
+  an executable script stays executable immediately after install, with no manual
+  `chmod` step.
+
+See [`src/content/docs/package-format.md`](../src/content/docs/package-format.md#binary-files)
+for the registry-side rules in full.
+
+### Subscriptions
+
+`pricing.model: subscription` is a normal manifest value alongside `free` and
+`one-time`, paired with a required `pricing.interval: month | year`:
+
+```yaml
+pricing:
+  model: subscription
+  amount_cents: 900
+  currency: usd
+  interval: month
+```
+
+`openagents validate` checks that `interval` is present and is `month` or `year`
+whenever `model` is `subscription` (same rule the registry enforces server-side).
+`openagents info` prints a subscription's price as `$9.00/month` instead of a flat
+amount. Buying a subscription still isn't supported from the CLI itself (see the
+paid-package note under `add` above) — the CLI's role is packing and validating the
+manifest, not driving Stripe Checkout.
 
 `--dry-run` stops here without making a request. Otherwise it `POST`s to
 `/api/v1/publish` with your stored token (run `openagents login` first — a

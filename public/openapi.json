@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "OpenAgents API",
-    "version": "2.0.0",
-    "description": "Every route under /api/v1, plus checkout, the Stripe webhook, and Connect onboarding. Some paths describe the batch-2 target contract (tokens, versions, lifecycle/moderation, reviews, analytics, search facets, tags) landing alongside this document — see docs/AUDIT-2026-09.md and src/content/docs/api.md for narrative docs and current status. All responses are JSON except tarball/raw-file downloads. Every non-2xx response is shaped like Error unless noted otherwise.",
+    "version": "3.0.0",
+    "description": "Every route under /api/v1, plus checkout, the billing portal, the Stripe and GitHub webhooks, and Connect onboarding. Some paths describe target contracts landing alongside this document across two batches — batch 2 (tokens, versions, lifecycle/moderation, reviews, analytics, search facets, tags) and batch 3 (subscriptions, collections, binary files, GitHub auto-sync, durable rate limits, account export/delete, badges/OG/RSS) — see docs/AUDIT-2026-09.md and src/content/docs/api.md for narrative docs and current status. All responses are JSON except tarball/raw-file/badge/OG-image downloads. Every non-2xx response is shaped like Error unless noted otherwise.",
     "license": { "name": "MIT" }
   },
   "servers": [
@@ -21,7 +21,10 @@
     { "name": "tokens", "description": "Personal access tokens" },
     { "name": "users", "description": "Profiles and the current session" },
     { "name": "admin", "description": "Moderation queue and reports (admin only)" },
-    { "name": "payments", "description": "Checkout, webhook, Stripe Connect" },
+    { "name": "payments", "description": "Checkout, billing portal, webhook, Stripe Connect" },
+    { "name": "collections", "description": "Curated, ordered lists of packages" },
+    { "name": "sources", "description": "GitHub auto-sync: linking a package to a repo for automatic republishing" },
+    { "name": "account", "description": "Data export and account deletion" },
     { "name": "auth", "description": "Auth.js sign-in/callback/session" }
   ],
   "components": {
@@ -42,7 +45,9 @@
     "parameters": {
       "owner": { "name": "owner", "in": "path", "required": true, "schema": { "type": "string" }, "description": "Package owner handle." },
       "name": { "name": "name", "in": "path", "required": true, "schema": { "type": "string" }, "description": "Package name." },
-      "version": { "name": "version", "in": "path", "required": true, "schema": { "type": "string" }, "description": "A published semver version string." }
+      "version": { "name": "version", "in": "path", "required": true, "schema": { "type": "string" }, "description": "A published semver version string." },
+      "handle": { "name": "handle", "in": "path", "required": true, "schema": { "type": "string" }, "description": "A collection owner's handle." },
+      "slug": { "name": "slug", "in": "path", "required": true, "schema": { "type": "string" }, "description": "A collection's slug, unique per owner." }
     },
     "schemas": {
       "Error": {
@@ -57,9 +62,10 @@
         "type": "object",
         "required": ["model", "amountCents", "currency"],
         "properties": {
-          "model": { "type": "string", "enum": ["free", "one-time", "subscription"], "description": "subscription is reserved; rejected at publish today." },
-          "amountCents": { "type": "integer", "minimum": 0 },
-          "currency": { "type": "string", "description": "3-letter lowercase ISO 4217 code." }
+          "model": { "type": "string", "enum": ["free", "one-time", "subscription"] },
+          "amountCents": { "type": "integer", "minimum": 0, "description": "For subscription, the amount charged per interval." },
+          "currency": { "type": "string", "description": "3-letter lowercase ISO 4217 code." },
+          "interval": { "type": "string", "enum": ["month", "year"], "description": "Required when model is subscription; absent/ignored otherwise." }
         }
       },
       "ManifestInput": {
@@ -245,6 +251,85 @@
           },
           "stars": { "type": "integer" },
           "rating": { "type": "object", "properties": { "average": { "type": "number", "nullable": true }, "count": { "type": "integer" } } }
+        }
+      },
+      "CollectionItem": {
+        "type": "object",
+        "required": ["owner", "name", "position", "addedAt"],
+        "properties": {
+          "owner": { "type": "string" },
+          "name": { "type": "string" },
+          "note": { "type": "string", "nullable": true },
+          "position": { "type": "integer" },
+          "addedAt": { "type": "string", "format": "date-time" },
+          "package": { "$ref": "#/components/schemas/PackageSummary", "description": "Inlined so a client can render the collection without a request per item." }
+        }
+      },
+      "Collection": {
+        "type": "object",
+        "required": ["id", "ownerHandle", "slug", "title", "isPublic", "featured", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "ownerHandle": { "type": "string" },
+          "slug": { "type": "string" },
+          "title": { "type": "string" },
+          "description": { "type": "string", "nullable": true },
+          "isPublic": { "type": "boolean" },
+          "featured": { "type": "boolean" },
+          "itemCount": { "type": "integer", "description": "Present on list responses; omitted in favor of a full `items` array on the single-collection GET." },
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/CollectionItem" }, "description": "Present only on GET /api/v1/collections/{handle}/{slug}." },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "CollectionList": {
+        "type": "object",
+        "required": ["items", "total"],
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/Collection" } },
+          "total": { "type": "integer" }
+        }
+      },
+      "PackageSource": {
+        "type": "object",
+        "required": ["id", "repo"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "repo": { "type": "string", "description": "\"github-owner/repo\"." },
+          "ref": { "type": "string", "nullable": true, "description": "Branch or tag; null means the repo's default branch / the pushed tag." },
+          "subdir": { "type": "string", "nullable": true },
+          "webhookUrl": { "type": "string", "description": "\"/api/webhooks/github/{id}\" — present on PUT/GET." },
+          "secret": { "type": "string", "description": "Shown exactly once, on the PUT response that creates the link. Never returned by GET." },
+          "lastSyncedAt": { "type": "string", "format": "date-time", "nullable": true },
+          "lastResult": { "type": "string", "nullable": true, "description": "e.g. \"published 1.3.0\", \"up to date\", or an error message from the last sync attempt." }
+        }
+      },
+      "Badge": {
+        "type": "object",
+        "description": "Query parameters accepted by GET .../badge. The response itself is an image/svg+xml body, not JSON.",
+        "properties": {
+          "type": { "type": "string", "enum": ["version", "downloads", "stars", "rating"], "default": "version" }
+        }
+      },
+      "AccountExport": {
+        "type": "object",
+        "description": "Everything tied to the signed-in account. The response itself is a JSON file download (Content-Disposition: attachment), not an inline API shape a client is expected to type against.",
+        "properties": {
+          "profile": { "$ref": "#/components/schemas/Profile" },
+          "packages": { "type": "array", "items": { "$ref": "#/components/schemas/Package" } },
+          "purchases": { "type": "array", "items": { "type": "object" } },
+          "reviews": { "type": "array", "items": { "$ref": "#/components/schemas/Review" } },
+          "tokens": { "type": "array", "items": { "$ref": "#/components/schemas/Token" } },
+          "stars": { "type": "array", "items": { "type": "string", "description": "\"owner/name\" ids." } },
+          "collections": { "type": "array", "items": { "$ref": "#/components/schemas/Collection" } },
+          "exportedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "BillingPortal": {
+        "type": "object",
+        "required": ["url"],
+        "properties": {
+          "url": { "type": "string", "description": "Stripe-hosted billing portal session URL; redirect the subscriber here." }
         }
       }
     }
@@ -514,7 +599,19 @@
                 "type": "object",
                 "required": ["files"],
                 "properties": {
-                  "files": { "type": "array", "items": { "type": "object", "properties": { "path": { "type": "string" }, "content": { "type": "string" } } } },
+                  "files": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": ["path", "content"],
+                      "properties": {
+                        "path": { "type": "string" },
+                        "content": { "type": "string", "description": "UTF-8 text, or base64 when encoding is \"base64\"." },
+                        "encoding": { "type": "string", "enum": ["utf8", "base64"], "default": "utf8" },
+                        "mode": { "type": "integer", "enum": [420, 493], "description": "POSIX file mode: 420 (0o644, default) or 493 (0o755, executable)." }
+                      }
+                    }
+                  },
                   "changelog": { "type": "string" }
                 }
               }
@@ -624,6 +721,251 @@
         "responses": { "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Profile" } } } }, "400": { "description": "handle change rejected (packages exist), or invalid body", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } } }
       }
     },
+    "/api/v1/account/export": {
+      "get": {
+        "tags": ["account"],
+        "summary": "Download everything tied to the signed-in account as JSON",
+        "security": [{ "sessionCookie": [] }],
+        "responses": {
+          "200": { "description": "JSON file download", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AccountExport" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/api/v1/account": {
+      "delete": {
+        "tags": ["account"],
+        "summary": "Permanently delete the signed-in account",
+        "description": "Blocked while the account owns a package with at least one sale, or holds an active subscription (as buyer or as a seller with active subscribers).",
+        "security": [{ "sessionCookie": [] }],
+        "requestBody": { "content": { "application/json": { "schema": { "type": "object", "required": ["confirm"], "properties": { "confirm": { "type": "string", "description": "Must exactly equal the caller's own handle." } } } } } },
+        "responses": {
+          "204": { "description": "Deleted" },
+          "400": { "description": "confirm doesn't match the handle", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "409": { "description": "Owns a package with sales, or holds an active subscription", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/api/v1/collections": {
+      "get": {
+        "tags": ["collections"],
+        "summary": "List collections",
+        "parameters": [
+          { "name": "featured", "in": "query", "schema": { "type": "string", "enum": ["1"] } },
+          { "name": "owner", "in": "query", "schema": { "type": "string" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 24, "maximum": 100 } },
+          { "name": "offset", "in": "query", "schema": { "type": "integer", "default": 0 } }
+        ],
+        "responses": { "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CollectionList" } } } } }
+      },
+      "post": {
+        "tags": ["collections"],
+        "summary": "Create a collection",
+        "security": [{ "sessionCookie": [] }, { "bearerToken": ["publish"] }],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["title"],
+                "properties": {
+                  "title": { "type": "string" },
+                  "slug": { "type": "string", "description": "Defaults to a slugified title." },
+                  "description": { "type": "string" },
+                  "isPublic": { "type": "boolean", "default": true }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Collection" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "403": { "description": "Token missing the publish scope", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "409": { "description": "Caller already has a collection with this slug", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/api/v1/collections/{handle}/{slug}": {
+      "get": {
+        "tags": ["collections"],
+        "summary": "Fetch one collection, including its items",
+        "parameters": [{ "$ref": "#/components/parameters/handle" }, { "$ref": "#/components/parameters/slug" }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Collection" } } } },
+          "404": { "description": "Not found, or unlisted and caller isn't the owner", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      },
+      "patch": {
+        "tags": ["collections"],
+        "summary": "Update a collection",
+        "security": [{ "sessionCookie": [] }, { "bearerToken": ["publish"] }],
+        "parameters": [{ "$ref": "#/components/parameters/handle" }, { "$ref": "#/components/parameters/slug" }],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": { "title": { "type": "string" }, "slug": { "type": "string" }, "description": { "type": "string" }, "isPublic": { "type": "boolean" } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Collection" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "403": { "description": "Not owner/admin", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "404": { "description": "Not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      },
+      "delete": {
+        "tags": ["collections"],
+        "summary": "Delete a collection",
+        "security": [{ "sessionCookie": [] }, { "bearerToken": ["publish"] }],
+        "parameters": [{ "$ref": "#/components/parameters/handle" }, { "$ref": "#/components/parameters/slug" }],
+        "responses": {
+          "204": { "description": "Deleted" },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "403": { "description": "Not owner/admin", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "404": { "description": "Not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/api/v1/collections/{handle}/{slug}/items/{owner}/{name}": {
+      "put": {
+        "tags": ["collections"],
+        "summary": "Add, reorder, or annotate a package in a collection",
+        "security": [{ "sessionCookie": [] }, { "bearerToken": ["publish"] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/handle" },
+          { "$ref": "#/components/parameters/slug" },
+          { "$ref": "#/components/parameters/owner" },
+          { "$ref": "#/components/parameters/name" }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "type": "object", "properties": { "owner": { "type": "string" }, "name": { "type": "string" }, "note": { "type": "string" }, "position": { "type": "integer" } } }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CollectionItem" } } } },
+          "400": { "description": "Package doesn't exist", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "403": { "description": "Not owner/admin", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      },
+      "delete": {
+        "tags": ["collections"],
+        "summary": "Remove a package from a collection",
+        "security": [{ "sessionCookie": [] }, { "bearerToken": ["publish"] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/handle" },
+          { "$ref": "#/components/parameters/slug" },
+          { "$ref": "#/components/parameters/owner" },
+          { "$ref": "#/components/parameters/name" }
+        ],
+        "responses": {
+          "204": { "description": "Removed" },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "403": { "description": "Not owner/admin", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/api/v1/admin/collections/{handle}/{slug}": {
+      "post": {
+        "tags": ["admin", "collections"],
+        "summary": "Toggle a collection's editorial featured flag",
+        "security": [{ "sessionCookie": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/handle" }, { "$ref": "#/components/parameters/slug" }],
+        "requestBody": { "content": { "application/json": { "schema": { "type": "object", "required": ["featured"], "properties": { "featured": { "type": "boolean" } } } } } },
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Collection" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "403": { "description": "Not an admin", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/api/v1/packages/{owner}/{name}/badge": {
+      "get": {
+        "tags": ["packages"],
+        "summary": "Embeddable SVG status badge",
+        "parameters": [
+          { "$ref": "#/components/parameters/owner" },
+          { "$ref": "#/components/parameters/name" },
+          { "name": "type", "in": "query", "schema": { "type": "string", "enum": ["version", "downloads", "stars", "rating"], "default": "version" } }
+        ],
+        "responses": {
+          "200": { "description": "SVG badge", "content": { "image/svg+xml": { "schema": { "type": "string" } } } },
+          "404": { "description": "Not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/api/v1/packages/{owner}/{name}/source": {
+      "put": {
+        "tags": ["sources"],
+        "summary": "Link a package to a GitHub repository",
+        "security": [{ "sessionCookie": [] }, { "bearerToken": ["publish"] }],
+        "parameters": [{ "$ref": "#/components/parameters/owner" }, { "$ref": "#/components/parameters/name" }],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["repo"],
+                "properties": { "repo": { "type": "string" }, "ref": { "type": "string" }, "subdir": { "type": "string" } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Updated an existing link", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PackageSource" } } } },
+          "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PackageSource" } } } },
+          "400": { "description": "repo/subdir couldn't be resolved", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "403": { "description": "Not owner/admin, or token missing publish", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      },
+      "get": {
+        "tags": ["sources"],
+        "summary": "Read the linked GitHub source (no secret)",
+        "security": [{ "sessionCookie": [] }, { "bearerToken": ["read"] }],
+        "parameters": [{ "$ref": "#/components/parameters/owner" }, { "$ref": "#/components/parameters/name" }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PackageSource" } } } },
+          "404": { "description": "No source linked", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      },
+      "delete": {
+        "tags": ["sources"],
+        "summary": "Unlink a GitHub source",
+        "security": [{ "sessionCookie": [] }, { "bearerToken": ["publish"] }],
+        "parameters": [{ "$ref": "#/components/parameters/owner" }, { "$ref": "#/components/parameters/name" }],
+        "responses": {
+          "204": { "description": "Unlinked" },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "403": { "description": "Not owner/admin", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "404": { "description": "No source linked", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/api/v1/packages/{owner}/{name}/source/sync": {
+      "post": {
+        "tags": ["sources"],
+        "summary": "Trigger a sync now, without waiting for a webhook",
+        "security": [{ "sessionCookie": [] }, { "bearerToken": ["publish"] }],
+        "parameters": [{ "$ref": "#/components/parameters/owner" }, { "$ref": "#/components/parameters/name" }],
+        "responses": {
+          "200": { "description": "Nothing to sync", "content": { "application/json": { "schema": { "type": "object", "properties": { "synced": { "type": "boolean" }, "reason": { "type": "string" } } } } } },
+          "201": { "description": "Published a new version", "content": { "application/json": { "schema": { "type": "object", "properties": { "id": { "type": "string" }, "version": { "type": "string" }, "url": { "type": "string" }, "status": { "type": "string" } } } } } },
+          "400": { "description": "No source linked, or import failed validation", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "403": { "description": "Not owner/admin", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
     "/api/v1/admin/queue": {
       "get": {
         "tags": ["admin"],
@@ -674,11 +1016,27 @@
       "post": {
         "tags": ["payments"],
         "summary": "Create a Stripe Checkout session for a paid package",
+        "description": "One-time mode for pricing.model \"one-time\"; subscription mode (a reused Stripe Customer, application_fee_percent applied on every renewal) for \"subscription\".",
         "security": [{ "sessionCookie": [] }],
         "requestBody": { "content": { "application/json": { "schema": { "type": "object", "required": ["owner", "name"], "properties": { "owner": { "type": "string" }, "name": { "type": "string" } } } } } },
         "responses": {
           "200": { "description": "OK", "content": { "application/json": { "schema": { "type": "object", "properties": { "url": { "type": "string" } } } } } },
-          "400": { "description": "Purchase can't proceed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "400": { "description": "Purchase can't proceed (free package, already owned, already subscribed, or buying your own package)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "429": { "description": "Rate limited", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "503": { "description": "Payments not enabled", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/api/billing/portal": {
+      "post": {
+        "tags": ["payments"],
+        "summary": "Create a Stripe billing portal session for the current subscriber",
+        "description": "Lets a subscriber update their payment method or cancel a subscription without contacting support.",
+        "security": [{ "sessionCookie": [] }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BillingPortal" } } } },
+          "400": { "description": "No Stripe Customer for this account (never subscribed)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
           "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
           "503": { "description": "Payments not enabled", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
         }
@@ -688,8 +1046,21 @@
       "post": {
         "tags": ["payments"],
         "summary": "Stripe webhook receiver",
-        "description": "Called by Stripe, verified against STRIPE_WEBHOOK_SECRET. Not intended for direct client calls.",
+        "description": "Called by Stripe, verified against STRIPE_WEBHOOK_SECRET. Not intended for direct client calls. Handles checkout.session.completed/async_payment_succeeded/async_payment_failed, charge.refunded, charge.dispute.created/closed, invoice.paid, invoice.payment_failed, customer.subscription.updated, customer.subscription.deleted, the Accounts v2 recipient-configuration events, and the legacy account.updated fallback.",
         "responses": { "200": { "description": "OK" }, "503": { "description": "Payments not enabled", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } } }
+      }
+    },
+    "/api/webhooks/github/{id}": {
+      "post": {
+        "tags": ["sources"],
+        "summary": "GitHub release/tag-push receiver for one linked package source",
+        "description": "Verified against the source's per-link secret (HMAC over the raw body, compared to X-Hub-Signature-256), falling back to SOURCE_WEBHOOK_KEY/AUTH_SECRET for the outer request. Imports the manifest at the released/tagged ref and publishes a new version only when its version is strictly greater than the currently published one. Not intended for direct client calls.",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "type": "object", "properties": { "synced": { "type": "boolean" }, "version": { "type": "string" } } } } } },
+          "401": { "description": "Signature didn't verify", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "404": { "description": "Unknown source id", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
       }
     },
     "/api/connect/onboard": {

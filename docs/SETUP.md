@@ -11,15 +11,19 @@ go — the app re-detects what's configured on each request, no build-time flag 
 2. Vercel adds a `DATABASE_URL` env var to the project automatically. For local dev,
    pull it down with `vercel env pull .env.local`, or copy the connection string from
    the Neon dashboard into `.env.local` yourself.
-3. Push the schema:
+3. Apply the schema:
    ```
-   npm run db:push
+   npm run db:migrate
    ```
-   This is what the hosted deployment does today. `./drizzle` also carries generated
-   migration files (`npm run db:generate` after any schema edit) for anyone who wants
-   a reviewable, one-file-at-a-time migration path instead — see "Schema migrations"
-   in `src/content/docs/self-hosting.md` for the full workflow and how CI keeps
-   `drizzle/` from drifting out of sync with `src/lib/db/schema.ts`.
+   This is now the recommended path, including for the hosted deployment — it
+   applies every pending migration under `./drizzle` to `DATABASE_URL`. Running it
+   the first time against a database that was previously set up with `db:push`
+   automatically **baselines** it (detects the existing schema matches, marks the
+   relevant migrations as already applied, and only actually runs anything genuinely
+   new) — see "Schema migrations" → "Baselining a `db:push`-created database" in
+   `src/content/docs/self-hosting.md` for exactly what that does. `npm run db:push`
+   still works for quick local iteration, but reach for `db:migrate` for anything
+   with real data.
 4. Optional: `npm run db:studio` opens Drizzle Studio against `DATABASE_URL` to browse
    data.
 
@@ -115,11 +119,33 @@ https://docs.stripe.com/connect/accounts-v2/account-creation.
 | `DOWNLOAD_HASH_SALT` | Salts the per-day, per-client hash used to dedupe download counts. |
 | `SENTRY_DSN` | When set, errors are also forwarded to Sentry in addition to the always-on stderr log — see `src/instrumentation.ts` / `src/lib/monitoring.ts`. |
 
+## 5. Email notifications (optional)
+
+| Variable | Effect |
+|---|---|
+| `RESEND_API_KEY` | [Resend](https://resend.com) API key. Without it, notification sending is a no-op — nothing breaks, emails just don't go out. |
+| `EMAIL_FROM` | The `From` address for every email this deployment sends. Required alongside `RESEND_API_KEY`. |
+| `ADMIN_EMAIL` | Where report notifications land. Optional; other notification types don't need it. |
+
+Sends: a purchase receipt to the buyer, a sale notice to the seller, a report notice
+to `ADMIN_EMAIL`, and a status-change notice to a package's owner — see
+`src/lib/notify.ts` / `src/lib/email.ts`.
+
+## 6. GitHub auto-sync (optional)
+
+| Variable | Effect |
+|---|---|
+| `SOURCE_WEBHOOK_KEY` | Signing key for verifying `POST /api/webhooks/github/{id}` requests. Optional — falls back to `AUTH_SECRET` when unset. |
+
+See "GitHub auto-sync" in `src/content/docs/publishing.md` for linking a package to
+a repo so a release/tag push republishes it automatically.
+
 ## Commands reference
 
 | command             | purpose                                      |
 |----------------------|----------------------------------------------|
 | `npm run db:generate` | diff `src/lib/db/schema.ts` against `./drizzle` and write a new migration file if it changed (offline, no `DATABASE_URL` needed) |
-| `npm run db:push`     | push the Drizzle schema straight to `DATABASE_URL` — what the hosted deployment uses today |
+| `npm run db:migrate`  | apply pending migrations under `./drizzle` to `DATABASE_URL` — the recommended path; baselines a `db:push`-created database automatically the first time it runs against one (see `src/content/docs/self-hosting.md#schema-migrations`) |
+| `npm run db:push`     | push the Drizzle schema straight to `DATABASE_URL`, skipping the migrations folder — fine for quick local iteration, but prefer `db:migrate` for anything with real data |
 | `npm run db:studio`   | open Drizzle Studio against `DATABASE_URL`    |
 | `npx drizzle-kit check` | verify `./drizzle`'s migration journal/snapshots are internally consistent (does **not** detect drift against the live schema — CI uses `db:generate` + `git diff` for that) |

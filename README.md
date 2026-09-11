@@ -89,28 +89,55 @@ See [`cli/README.md`](./cli/README.md) for every command.
   catalog.
 - **Auth** — Auth.js v5 with GitHub and Google providers, each enabled independently
   once its own env vars are present; the app never crashes without them.
-- **Payments** — Stripe Connect for paid packages, with a configurable platform fee
-  (default 10%). Connected accounts use **Stripe Accounts v2**
-  (`stripe.v2.core.accounts`), not the legacy v1 Express flow
-  (`stripe.accounts.create`); checkout and webhook routes return `503` rather than
-  erroring when Stripe isn't configured. Paid packages are gated at the file level —
-  only `README.md` and `openagent.yaml` are readable before purchase.
+- **Payments** — Stripe Connect for paid packages, one-time or **subscription**
+  (`pricing.model: subscription`, billed monthly or yearly), with a configurable
+  platform fee (default 10%) taken on every charge — including every subscription
+  renewal, via `application_fee_percent`. Connected accounts use **Stripe Accounts
+  v2** (`stripe.v2.core.accounts`), not the legacy v1 Express flow
+  (`stripe.accounts.create`); checkout, the billing portal
+  (`POST /api/billing/portal`), and webhook routes return `503` rather than erroring
+  when Stripe isn't configured. Paid packages are gated at the file level — only
+  `README.md` and `openagent.yaml` are readable before purchase.
 - **Distribution** — every package is downloadable as a tarball, pinned to a version
   or latest (`/api/v1/packages/{owner}/{name}/download`,
   `.../versions/{version}/download`), with an `ETag`/`X-Checksum-Sha256` pair the CLI
   verifies on install. `npx openagents add owner/name[@version|@range]` resolves
-  `requires` transitively.
+  `requires` transitively. Packages can ship binary files (base64-encoded, POSIX mode
+  preserved through the tarball) alongside text, up to 2 MB total binary content.
 - **API tokens, lifecycle, reviews, analytics** — personal access tokens
   (`/settings/tokens`) for the CLI and third-party clients; a package moderation
   lifecycle (`pending`/`live`/`unlisted`/`deprecated`, an admin queue at `/admin`,
   anonymous reporting); star ratings + written reviews; per-package download/star
   analytics on a seller `/dashboard`. See [API Reference](./src/content/docs/api.md).
+- **Collections** — curated, ordered lists of packages (`/collections`,
+  `/c/{handle}/{slug}`) a user or an admin puts together, each installable in one
+  paste via a generated "copy install-all" command.
+- **GitHub auto-sync** — a package can be linked to a GitHub repository
+  (`/settings/sources`) so a new release or tag push republishes it automatically via
+  an inbound webhook, instead of running `openagents publish` by hand each time.
+- **Durable rate limiting** — download/star/report/publish/checkout/token routes are
+  rate-limited against a shared Postgres-backed counter when `DATABASE_URL` is set
+  (falling back to a best-effort in-memory limiter otherwise), so a limit holds
+  across every serverless instance rather than resetting per cold start.
+- **Enforced Content-Security-Policy** — a strict, nonce-based CSP is sent on every
+  response (not report-only), with creator READMEs rendered through
+  `react-markdown` with raw HTML disabled.
+- **Sharing & SEO** — per-package/creator Open Graph images, embeddable SVG status
+  badges, `SoftwareSourceCode` JSON-LD on package pages, and an RSS feed
+  (`/feed.xml`).
+- **Email notifications** — purchase receipts, sale notices, report notices, and
+  status-change notices via Resend (`RESEND_API_KEY`); a no-op without it.
+- **Account data controls** — export everything tied to an account as JSON
+  (`GET /api/v1/account/export`) or delete the account outright
+  (`DELETE /api/v1/account`, blocked while it owns packages with sales or holds an
+  active subscription).
 - **Schema migrations** — `src/lib/db/schema.ts` is versioned as Drizzle SQL
   migrations checked into `drizzle/` (`npm run db:generate` after a schema edit; CI
-  fails if `drizzle/` drifts from the schema). The hosted deployment still applies
-  schema changes with `npm run db:push` today — see
-  [Self-Hosting](./src/content/docs/self-hosting.md#schema-migrations) for the
-  `db:generate`/`db:migrate` path and how to switch.
+  fails if `drizzle/` drifts from the schema). `npm run db:migrate` is the
+  recommended way to apply them — including on the hosted deployment — and
+  automatically baselines a database that was previously set up with `db:push`; see
+  [Self-Hosting](./src/content/docs/self-hosting.md#schema-migrations) for exactly
+  what that means.
 - **Error monitoring** — every server error is logged as structured JSON to stderr;
   set `SENTRY_DSN` to also forward it to Sentry, no `@sentry/nextjs` dependency
   required (see `src/instrumentation.ts`, `src/lib/monitoring.ts`).
