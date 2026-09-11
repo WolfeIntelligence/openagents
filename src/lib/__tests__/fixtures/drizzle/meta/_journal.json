@@ -5,15 +5,15 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1789053217365,
-      "tag": "0000_cloudy_anthem",
+      "when": 1700000000000,
+      "tag": "0000_fixture_one",
       "breakpoints": true
     },
     {
       "idx": 1,
       "version": "7",
-      "when": 1789085480365,
-      "tag": "0001_blushing_power_pack",
+      "when": 1700000100000,
+      "tag": "0001_fixture_two",
       "breakpoints": true
     }
   ]

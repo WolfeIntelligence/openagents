@@ -6,8 +6,10 @@
 //
 // This module has no side effects and requires no env vars to import.
 
+import { sql } from "drizzle-orm";
 import {
   boolean,
+  index,
   integer,
   jsonb,
   pgTable,
@@ -17,6 +19,7 @@ import {
   unique,
   uuid,
 } from "drizzle-orm/pg-core";
+import type { PgColumn } from "drizzle-orm/pg-core";
 import type { AdapterAccountType } from "next-auth/adapters";
 
 // ---------------------------------------------------------------------------
@@ -91,6 +94,36 @@ export const verificationTokens = pgTable(
 // OpenAgents domain tables
 // ---------------------------------------------------------------------------
 
+/**
+ * The exact full-text-search expression indexed by `packages_fts_idx` below.
+ *
+ * Defined as a function of the four/five columns it touches (rather than a
+ * plain `sql` constant closing over the `packages` table) so it can be built
+ * twice from the *same source* without a circular import: once here, inside
+ * `packages`'s own index list — where `packages` doesn't exist as a value
+ * yet, only `t` (the table being defined) does — and once from
+ * `src/lib/catalog/db.ts`'s search query, called as
+ * `packagesFtsExpression(packages)` after the table is fully defined. Postgres
+ * can only use a functional GIN index when the query expression matches the
+ * indexed expression byte-for-byte, so this function is the single source of
+ * truth for both sides; never inline this expression again elsewhere.
+ */
+export function packagesFtsExpression(t: {
+  title: PgColumn;
+  summary: PgColumn;
+  name: PgColumn;
+  owner: PgColumn;
+  tags: PgColumn;
+}) {
+  return sql`to_tsvector('english',
+      coalesce(${t.title}, '') || ' ' ||
+      coalesce(${t.summary}, '') || ' ' ||
+      ${t.name} || ' ' ||
+      ${t.owner} || ' ' ||
+      coalesce((SELECT string_agg(tag, ' ') FROM jsonb_array_elements_text(${t.tags}) tag), '')
+    )`;
+}
+
 export const packages = pgTable(
   "packages",
   {
@@ -118,7 +151,20 @@ export const packages = pgTable(
     createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
     updatedAt: timestamp("updatedAt", { mode: "date" }).notNull().defaultNow(),
   },
-  (t) => [unique("packages_owner_name_unique").on(t.owner, t.name)]
+  (t) => [
+    unique("packages_owner_name_unique").on(t.owner, t.name),
+    // G-O5 / GIN index for full-text search: indexes the exact expression
+    // catalog/db.ts's `tsMatchCondition` matches against (via the shared
+    // `packagesFtsExpression` above), so the planner can use this index
+    // instead of computing `to_tsvector` per row on every search.
+    index("packages_fts_idx").using("gin", packagesFtsExpression(t)),
+    // Owner-scoped listings (creator pages, `?owner=`, facet dimension skips)
+    // and the admin/moderation status filter are both common enough to want
+    // their own btree index rather than relying on the (owner, name) unique
+    // index's leading column alone.
+    index("packages_owner_idx").on(t.owner),
+    index("packages_status_idx").on(t.status),
+  ]
 );
 
 export const packageVersions = pgTable(
@@ -178,9 +224,15 @@ export const purchases = pgTable(
     status: text("status").notNull().default("pending"), // pending | paid | failed | refunded
     createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
   },
-  // One purchase row per Stripe Checkout Session: webhook redeliveries and the
-  // success-page fallback both upsert against this rather than inserting twice.
-  (t) => [unique("purchases_stripe_session_unique").on(t.stripeSessionId)]
+  (t) => [
+    // One purchase row per Stripe Checkout Session: webhook redeliveries and the
+    // success-page fallback both upsert against this rather than inserting twice.
+    unique("purchases_stripe_session_unique").on(t.stripeSessionId),
+    // "my purchases" / entitlement checks look up by (user, package); the
+    // webhook and success-page fallback look up by payment intent.
+    index("purchases_user_package_idx").on(t.userId, t.packageId),
+    index("purchases_payment_intent_idx").on(t.stripePaymentIntent),
+  ]
 );
 
 // ---------------------------------------------------------------------------
@@ -220,7 +272,12 @@ export const stars = pgTable(
     name: text("name").notNull(),
     createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
   },
-  (t) => [primaryKey({ columns: [t.userId, t.owner, t.name] })]
+  (t) => [
+    primaryKey({ columns: [t.userId, t.owner, t.name] }),
+    // Star counts/toggles are looked up by (owner, name) across all users, not
+    // just by the (userId, owner, name) primary key's leading column.
+    index("stars_owner_name_idx").on(t.owner, t.name),
+  ]
 );
 
 // ---------------------------------------------------------------------------
@@ -260,7 +317,12 @@ export const downloadEvents = pgTable(
     day: text("day").notNull(),
     createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
   },
-  (t) => [unique("download_events_unique_per_day").on(t.owner, t.name, t.clientHash, t.day)]
+  (t) => [
+    unique("download_events_unique_per_day").on(t.owner, t.name, t.clientHash, t.day),
+    // Backs the trending query (`sortByTrending` in catalog/db.ts), which
+    // groups by (owner, name) over a `day >=` window.
+    index("download_events_owner_name_day_idx").on(t.owner, t.name, t.day),
+  ]
 );
 
 export const reports = pgTable("reports", {
@@ -288,7 +350,11 @@ export const reviews = pgTable(
     createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
     updatedAt: timestamp("updatedAt", { mode: "date" }).notNull().defaultNow(),
   },
-  (t) => [unique("reviews_one_per_user_per_package").on(t.userId, t.owner, t.name)]
+  (t) => [
+    unique("reviews_one_per_user_per_package").on(t.userId, t.owner, t.name),
+    // Package detail pages list all reviews for one (owner, name).
+    index("reviews_owner_name_idx").on(t.owner, t.name),
+  ]
 );
 
 // ---------------------------------------------------------------------------
