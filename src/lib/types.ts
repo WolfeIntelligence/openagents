@@ -55,8 +55,15 @@ export interface Manifest {
 
 export interface PackageFile {
   path: string; // relative to package root
-  size: number; // bytes
-  content?: string; // populated when explicitly requested
+  size: number; // bytes (decoded size for binary files, not the base64 length)
+  content?: string; // populated when explicitly requested; base64 when `encoding` is "base64"
+  /** How `content` encodes the file's bytes. Absent means "utf8" — every file
+   *  written before this field existed is implicitly text. */
+  encoding?: "utf8" | "base64";
+  /** POSIX file mode, e.g. 0o755 for an executable script. Absent means the
+   *  default 0o644 (see MAX_BINARY_BYTES/isExecutableName in lib/files.ts for
+   *  how this gets inferred when the source has no real mode bit). */
+  mode?: number;
 }
 
 export interface PackageVersion {
