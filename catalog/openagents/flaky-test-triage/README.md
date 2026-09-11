@@ -14,7 +14,7 @@ the test deterministic rather than merely quieter.
 ## Install
 
 ```bash
-npx openagents add openagents/flaky-test-triage
+npx openagents-cli add openagents/flaky-test-triage
 ```
 
 | Runtime | Installed to |

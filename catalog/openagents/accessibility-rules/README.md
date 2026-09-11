@@ -14,7 +14,7 @@ target exactly those.
 ## Install
 
 ```bash
-npx openagents add openagents/accessibility-rules
+npx openagents-cli add openagents/accessibility-rules
 ```
 
 | Runtime | Installed to |

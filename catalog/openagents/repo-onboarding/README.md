@@ -16,7 +16,7 @@ doesn't have to redo the exploration.
 ## Install
 
 ```bash
-npx openagents add openagents/repo-onboarding
+npx openagents-cli add openagents/repo-onboarding
 ```
 
 | Runtime | Installed to |

@@ -15,7 +15,7 @@ the rest.
 ## Install
 
 ```bash
-npx openagents add openagents/context-compaction
+npx openagents-cli add openagents/context-compaction
 ```
 
 | Runtime | Installed to |

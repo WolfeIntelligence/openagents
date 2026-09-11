@@ -20,7 +20,7 @@ more upfront scoping than a per-behavior loop.
 ## Install
 
 ```bash
-npx openagents add openagents/test-writer-loop
+npx openagents-cli add openagents/test-writer-loop
 ```
 
 | Runtime | Installed to |

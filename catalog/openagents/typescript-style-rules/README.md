@@ -14,7 +14,7 @@ swallowed into a catch block that does nothing.
 ## Install
 
 ```bash
-npx openagents add openagents/typescript-style-rules
+npx openagents-cli add openagents/typescript-style-rules
 ```
 
 | Runtime | Installed to |

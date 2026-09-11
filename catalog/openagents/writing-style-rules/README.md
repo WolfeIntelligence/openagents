@@ -14,7 +14,7 @@ is never sounding more certain than you are.
 ## Install
 
 ```bash
-npx openagents add openagents/writing-style-rules
+npx openagents-cli add openagents/writing-style-rules
 ```
 
 | Runtime | Installed to |

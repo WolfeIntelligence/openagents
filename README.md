@@ -9,7 +9,7 @@ run them in your own agent runtime: Claude Code, Cursor, Codex CLI, the OpenAI A
 SDK, LangGraph, or anything else via a generic install layout.
 
 ```bash
-npx openagents add openagents/pr-reviewer
+npx openagents-cli add openagents/pr-reviewer
 ```
 
 ## What's in a package
@@ -36,8 +36,8 @@ briefs). Browse them at [`/explore`](https://openagents-nu.vercel.app/explore) o
 them with the CLI:
 
 ```bash
-npx openagents search ""
-npx openagents info openagents/pr-reviewer
+npx openagents-cli search ""
+npx openagents-cli info openagents/pr-reviewer
 ```
 
 ## Quickstart (development)
@@ -101,7 +101,7 @@ See [`cli/README.md`](./cli/README.md) for every command.
 - **Distribution** — every package is downloadable as a tarball, pinned to a version
   or latest (`/api/v1/packages/{owner}/{name}/download`,
   `.../versions/{version}/download`), with an `ETag`/`X-Checksum-Sha256` pair the CLI
-  verifies on install. `npx openagents add owner/name[@version|@range]` resolves
+  verifies on install. `npx openagents-cli add owner/name[@version|@range]` resolves
   `requires` transitively. Packages can ship binary files (base64-encoded, POSIX mode
   preserved through the tarball) alongside text, up to 2 MB total binary content.
 - **API tokens, lifecycle, reviews, analytics** — personal access tokens

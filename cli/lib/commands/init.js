@@ -86,7 +86,7 @@ TODO: describe the situations this ${kind} is a good fit for.
 ## Install
 
 \`\`\`bash
-npx openagents add <owner>/${name}
+npx openagents-cli add <owner>/${name}
 \`\`\`
 
 ## Inputs

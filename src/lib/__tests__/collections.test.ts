@@ -130,7 +130,7 @@ test("buildInstallAllCommand: empty collection yields an empty string", () => {
 test("buildInstallAllCommand: one package", () => {
   assert.equal(
     buildInstallAllCommand([{ owner: "openagents", name: "pr-reviewer" }], "openagents"),
-    "npx openagents add openagents/pr-reviewer"
+    "npx openagents-cli add openagents/pr-reviewer"
   );
 });
 
@@ -142,7 +142,7 @@ test("buildInstallAllCommand: multiple packages chain with && in order, one line
     ],
     "openagents"
   );
-  assert.equal(cmd, "npx openagents add a/one && npx openagents add b/two");
+  assert.equal(cmd, "npx openagents-cli add a/one && npx openagents-cli add b/two");
   assert.equal(cmd.includes("\n"), false, "must be a single line");
 });
 

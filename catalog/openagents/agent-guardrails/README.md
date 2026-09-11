@@ -17,7 +17,7 @@ every action to a structured, append-only JSON Lines audit log.
 ## Install
 
 ```bash
-npx openagents add openagents/agent-guardrails
+npx openagents-cli add openagents/agent-guardrails
 ```
 
 | Runtime | Installed to |

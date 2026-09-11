@@ -15,7 +15,7 @@ cost rather than the obvious one.
 ## Install
 
 ```bash
-npx openagents add openagents/sql-explain
+npx openagents-cli add openagents/sql-explain
 ```
 
 | Runtime | Installed to |

@@ -30,7 +30,7 @@ node bin/openagents.js add openagents/pr-reviewer
 Once a release is out, the one-liner will be:
 
 ```bash
-npx openagents add openagents/pr-reviewer
+npx openagents-cli add openagents/pr-reviewer
 ```
 
 This does three things:
@@ -41,7 +41,7 @@ This does three things:
    from marker directories (`.claude/`, `.cursor/`, `.codex/`, etc.), or set explicitly:
 
 ```bash
-npx openagents add openagents/pr-reviewer --runtime claude-code
+npx openagents-cli add openagents/pr-reviewer --runtime claude-code
 ```
 
 See [CLI Reference](/docs/cli) for every command, and [Runtimes](/docs/runtimes) for
@@ -51,7 +51,7 @@ the full install-directory table and how each runtime picks the files up.
 
 - **Web**: [`/explore`](/explore) — filter by kind, runtime, price, and search text.
 - **API**: `GET /api/v1/search?q=code+review` — see [API Reference](/docs/api).
-- **CLI**: `npx openagents search "code review"`.
+- **CLI**: `npx openagents-cli search "code review"`.
 - **Collections**: [`/collections`](/collections) — curated, ordered lists of
   packages someone put together around a theme ("everything for PR review"), each
   with a one-paste "copy install-all" command; see
@@ -81,8 +81,8 @@ no sign-in, no payment, always available even with zero environment variables
 configured server-side. A good first one to try:
 
 ```bash
-npx openagents info openagents/pr-reviewer
-npx openagents add openagents/pr-reviewer
+npx openagents-cli info openagents/pr-reviewer
+npx openagents-cli add openagents/pr-reviewer
 ```
 
 ## Publish your own

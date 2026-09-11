@@ -14,7 +14,7 @@ number including the cases that got worse.
 ## Install
 
 ```bash
-npx openagents add openagents/perf-investigation
+npx openagents-cli add openagents/perf-investigation
 ```
 
 | Runtime | Installed to |

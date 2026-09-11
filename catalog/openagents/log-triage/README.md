@@ -14,7 +14,7 @@ ranked by evidence and each with a cheap test attached.
 ## Install
 
 ```bash
-npx openagents add openagents/log-triage
+npx openagents-cli add openagents/log-triage
 ```
 
 | Runtime | Installed to |

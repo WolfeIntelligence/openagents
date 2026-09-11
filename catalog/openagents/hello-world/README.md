@@ -16,7 +16,7 @@ starting template for your own workflow package.
 ## Install
 
 ```
-npx openagents add openagents/hello-world
+npx openagents-cli add openagents/hello-world
 ```
 
 See the package page for runtime-specific install paths.

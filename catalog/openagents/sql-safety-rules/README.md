@@ -14,7 +14,7 @@ impossible to do by accident.
 ## Install
 
 ```bash
-npx openagents add openagents/sql-safety-rules
+npx openagents-cli add openagents/sql-safety-rules
 ```
 
 | Runtime | Installed to |

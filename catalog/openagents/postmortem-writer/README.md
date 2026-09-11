@@ -15,7 +15,7 @@ be finished.
 ## Install
 
 ```bash
-npx openagents add openagents/postmortem-writer
+npx openagents-cli add openagents/postmortem-writer
 ```
 
 | Runtime | Installed to |
