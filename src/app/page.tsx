@@ -10,6 +10,8 @@ import { isStripeEnabled, PLATFORM_FEE_BPS } from "@/lib/stripe";
 
 import { cliSpec } from "@/lib/site";
 import { installCommand } from "@/lib/runtimes";
+import { listCollections } from "@/lib/collections";
+import { CollectionCard } from "@/components/CollectionCard";
 
 const STEPS = [
   {
@@ -28,7 +30,7 @@ const STEPS = [
 
 export default async function HomePage() {
   const catalog = await getCatalog();
-  const [featured, kindCounts, tags, trending] = await Promise.all([
+  const [featured, kindCounts, tags, trending, featuredCollections] = await Promise.all([
     catalog.featured(6),
     Promise.all(
       PACKAGE_KINDS.map(async (kind) => {
@@ -42,6 +44,10 @@ export default async function HomePage() {
     // (see sortByTrending in catalog/db.ts), so this rail only renders once
     // there's actually something trending to show.
     catalog.list({ sort: "trending", limit: 6 }),
+    // Y2: featured collections first, falling back to newest public ones —
+    // listCollections already orders that way. Empty (not a throw) with no
+    // database, so this rail just doesn't render below.
+    listCollections({ limit: 4 }),
   ]);
   const counts = Object.fromEntries(kindCounts);
   const paymentsLive = isStripeEnabled();
@@ -148,6 +154,25 @@ export default async function HomePage() {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {trendingItems.map((pkg) => (
               <PackageCard key={pkg.id} pkg={pkg} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Collections (Y2) — up to 4 featured, or newest public ones when
+          nothing is featured yet. Renders nothing with no database or no
+          public collections. */}
+      {featuredCollections.items.length > 0 && (
+        <section className="mx-auto max-w-7xl px-4 py-4 sm:px-6 lg:px-8">
+          <div className="mb-5 flex items-center justify-between">
+            <h2 className="text-xl font-semibold text-fg">Collections</h2>
+            <Link href="/collections" className="text-sm font-medium text-accent hover:text-accent-hover">
+              Browse all →
+            </Link>
+          </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {featuredCollections.items.map((c) => (
+              <CollectionCard key={c.id} collection={c} />
             ))}
           </div>
         </section>

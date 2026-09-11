@@ -158,3 +158,39 @@ export function FeaturedToggle({
     </div>
   );
 }
+
+/** Y2: toggles a collection's `featured` flag via
+ *  `/api/v1/admin/collections/[handle]/[slug]` — same shape as `FeaturedToggle`
+ *  above, for the "Featured collections" admin section. */
+export function FeaturedCollectionToggle({
+  owner,
+  slug,
+  featured,
+}: {
+  owner: string;
+  slug: string;
+  featured: boolean;
+}) {
+  const { busy, error, run } = useBusyAction();
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() =>
+          run(() =>
+            fetch(`/api/v1/admin/collections/${owner}/${slug}`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ featured: !featured }),
+            })
+          )
+        }
+        className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-fg hover:border-border-strong disabled:opacity-60"
+      >
+        {featured ? "Unfeature" : "Feature"}
+      </button>
+      {error && <p className="text-xs text-danger">{error}</p>}
+    </div>
+  );
+}

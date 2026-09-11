@@ -8,7 +8,13 @@ import { isDbEnabled } from "@/lib/db/client";
 import { getCatalog } from "@/lib/catalog";
 import { listQueue } from "@/lib/moderation";
 import { CATALOG_ALL_LIMIT } from "@/lib/types";
-import { ApproveRejectButtons, FeaturedToggle, ReportActions } from "@/app/admin/AdminControls";
+import { listCollections } from "@/lib/collections";
+import {
+  ApproveRejectButtons,
+  FeaturedCollectionToggle,
+  FeaturedToggle,
+  ReportActions,
+} from "@/app/admin/AdminControls";
 
 export const metadata: Metadata = {
   title: "Admin",
@@ -36,9 +42,11 @@ export default async function AdminPage() {
   }
 
   const catalog = await getCatalog();
-  const [queue, { items: everything }] = await Promise.all([
+  const [queue, { items: everything }, { items: allCollections }] = await Promise.all([
     listQueue(),
     catalog.list({ includeHidden: true, limit: CATALOG_ALL_LIMIT }),
+    // Y2: every collection, public and private — admins can feature either.
+    listCollections({ includePrivate: true, limit: 100 }),
   ]);
 
   // Featuring only works on DB-backed packages (setPackageFeatured needs a
@@ -122,6 +130,35 @@ export default async function AdminPage() {
                 {p.id}
               </Link>
               <FeaturedToggle owner={p.owner} name={p.name} featured={p.featured} />
+            </li>
+          ))}
+        </ul>
+      </Section>
+
+      <Section
+        title="Featured collections"
+        empty="No collections yet."
+        isEmpty={allCollections.length === 0}
+      >
+        <ul className="flex flex-col gap-2">
+          {allCollections.map((c) => (
+            <li
+              key={c.id}
+              className="flex items-center justify-between gap-3 rounded-lg border border-border p-3"
+            >
+              <div className="min-w-0">
+                <Link
+                  href={`/c/${c.owner}/${c.slug}`}
+                  className="truncate font-mono text-sm text-accent hover:text-accent-hover"
+                >
+                  {c.owner}/{c.slug}
+                </Link>
+                <p className="text-xs text-fg-subtle">
+                  {c.title} · {c.itemCount} {c.itemCount === 1 ? "package" : "packages"}
+                  {!c.isPublic && " · private"}
+                </p>
+              </div>
+              <FeaturedCollectionToggle owner={c.owner} slug={c.slug} featured={c.featured} />
             </li>
           ))}
         </ul>
