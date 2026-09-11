@@ -1,5 +1,5 @@
 {
-  "id": "a41632d5-fdf2-479d-8f98-8768080b0605",
+  "id": "57f6be63-e388-45ee-a658-676a34c0b1c3",
   "prevId": "a056e89a-95a7-4ef6-b96a-e32724c1a14d",
   "version": "7",
   "dialect": "postgresql",
@@ -930,7 +930,7 @@
           "name": "packages_fts_idx",
           "columns": [
             {
-              "expression": "to_tsvector('english',\n      coalesce(\"title\", '') || ' ' ||\n      coalesce(\"summary\", '') || ' ' ||\n      \"name\" || ' ' ||\n      \"owner\" || ' ' ||\n      coalesce((SELECT string_agg(tag, ' ') FROM jsonb_array_elements_text(\"tags\") tag), '')\n    )",
+              "expression": "to_tsvector('english',\n      coalesce(\"title\", '') || ' ' ||\n      coalesce(\"summary\", '') || ' ' ||\n      \"name\" || ' ' ||\n      \"owner\" || ' ' ||\n      coalesce(\"tags\"::text, '')\n    )",
               "asc": true,
               "isExpression": true,
               "nulls": "last"

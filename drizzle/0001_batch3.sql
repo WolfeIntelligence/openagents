@@ -58,7 +58,7 @@ CREATE INDEX "packages_fts_idx" ON "packages" USING gin (to_tsvector('english',
       coalesce("summary", '') || ' ' ||
       "name" || ' ' ||
       "owner" || ' ' ||
-      coalesce((SELECT string_agg(tag, ' ') FROM jsonb_array_elements_text("tags") tag), '')
+      coalesce("tags"::text, '')
     ));--> statement-breakpoint
 CREATE INDEX "packages_owner_idx" ON "packages" USING btree ("owner");--> statement-breakpoint
 CREATE INDEX "packages_status_idx" ON "packages" USING btree ("status");--> statement-breakpoint

@@ -107,6 +107,11 @@ export const verificationTokens = pgTable(
  * can only use a functional GIN index when the query expression matches the
  * indexed expression byte-for-byte, so this function is the single source of
  * truth for both sides; never inline this expression again elsewhere.
+ *
+ * Tags are folded in as the jsonb's text form (`["a","b"]`) rather than via a
+ * `jsonb_array_elements_text` subquery: index expressions must be immutable and
+ * may not contain subqueries, and `to_tsvector` drops the brackets and quotes
+ * anyway, so the tokens are the same.
  */
 export function packagesFtsExpression(t: {
   title: PgColumn;
@@ -120,7 +125,7 @@ export function packagesFtsExpression(t: {
       coalesce(${t.summary}, '') || ' ' ||
       ${t.name} || ' ' ||
       ${t.owner} || ' ' ||
-      coalesce((SELECT string_agg(tag, ' ') FROM jsonb_array_elements_text(${t.tags}) tag), '')
+      coalesce(${t.tags}::text, '')
     )`;
 }
 
