@@ -6,6 +6,7 @@ import { isDbEnabled } from "@/lib/db/client";
 import { error, json, preflight } from "@/lib/api";
 import { rateLimit } from "@/lib/ratelimit";
 import { PackageActionError, deletePackage, isReviewRequired, setPackageStatus } from "@/lib/moderation";
+import { notifyPackageStatusChanged } from "@/lib/notify";
 
 export const runtime = "nodejs";
 
@@ -81,6 +82,16 @@ export async function POST(
       isAdmin: admin,
       requireReview: isReviewRequired(),
     });
+    // Owners acting on their own package already know; only tell them when an admin
+    // changed it for them.
+    if (admin) {
+      void notifyPackageStatusChanged({
+        owner,
+        name,
+        status: result.status,
+        message: typeof message === "string" ? message : null,
+      });
+    }
     return json(result);
   } catch (err) {
     if (err instanceof PackageActionError) return error(err.status, err.message);

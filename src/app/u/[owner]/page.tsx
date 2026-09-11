@@ -11,6 +11,8 @@ import { EmptyState } from "@/components/EmptyState";
 import { SortSelect } from "@/components/SortSelect";
 import { Pagination } from "@/components/Pagination";
 import { RatingStars } from "@/components/RatingStars";
+import { listCollectionsForOwner } from "@/lib/collections";
+import { CollectionCard } from "@/components/CollectionCard";
 
 type Params = { owner: string };
 type RawSearchParams = Record<string, string | string[] | undefined>;
@@ -45,7 +47,7 @@ export default async function CreatorPage({
   const session = await auth();
   const isViewerOwner = Boolean(session?.user?.handle && session.user.handle === owner);
 
-  const [creator, packages, totals] = await Promise.all([
+  const [creator, packages, totals, collections] = await Promise.all([
     catalog.creator(owner),
     catalog.list({
       owner,
@@ -57,6 +59,7 @@ export default async function CreatorPage({
       includeHidden: isViewerOwner,
     }),
     getCreatorTotals(owner),
+    listCollectionsForOwner(owner),
   ]);
   if (!creator) notFound();
 
@@ -126,6 +129,18 @@ export default async function CreatorPage({
           </div>
         )}
 
+        {collections.length > 0 && (
+          <section className="mb-8">
+            <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-fg-subtle">
+              Collections
+            </h2>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {collections.map((c) => (
+                <CollectionCard key={c.id} collection={c} />
+              ))}
+            </div>
+          </section>
+        )}
         {packages.items.length > 0 ? (
           <>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">

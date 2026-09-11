@@ -4,6 +4,7 @@ import { isDbEnabled } from "@/lib/db/client";
 import { error, json, preflight } from "@/lib/api";
 import { clientIp, RATE_LIMITS, withRateLimit } from "@/lib/ratelimit";
 import { createReport, PackageActionError } from "@/lib/moderation";
+import { notifyReportCreated } from "@/lib/notify";
 
 export const runtime = "nodejs";
 
@@ -46,6 +47,14 @@ export async function POST(
       reason,
       details: typeof details === "string" ? details : undefined,
       reporterUserId: requester?.id ?? null,
+    });
+    // Best-effort admin email; never delays or fails the report itself.
+    void notifyReportCreated({
+      reportId: result.id,
+      owner,
+      name,
+      reason,
+      details: typeof details === "string" ? details : null,
     });
     return json(result, { status: 201 });
   } catch (err) {
