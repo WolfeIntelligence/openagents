@@ -140,7 +140,7 @@ test("buildInstallAllCommand: multiple packages chain with && in order, one line
       { owner: "a", name: "one" },
       { owner: "b", name: "two" },
     ],
-    "openagents"
+    "openagents-cli"
   );
   assert.equal(cmd, "npx openagents-cli add a/one && npx openagents-cli add b/two");
   assert.equal(cmd.includes("\n"), false, "must be a single line");
