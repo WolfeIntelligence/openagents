@@ -28,6 +28,7 @@ const LINKS: { href: string; label: string }[] = [
   { href: "/stars", label: "Stars" },
   { href: "/purchases", label: "Purchases" },
   { href: "/settings/payouts", label: "Payouts" },
+  { href: "/settings/account", label: "Account" },
 ];
 
 export function UserMenu({ name, image, handle, isAdmin = false }: UserMenuProps) {

@@ -29,11 +29,19 @@ export async function GET(
   // `owner.json` "url"), so read it here for DB-backed users. Falls back to
   // the seed-derived `creator.url` so seed owners still get a link.
   let website: string | null = creator.url ?? null;
+  // Likewise for `users.createdAt` — seed catalog owners (owner.json on disk) have
+  // no signup date at all, so `joinedAt` stays null for them.
+  let joinedAt: string | null = null;
   const db = getDb();
   if (db) {
     try {
-      const [row] = await db.select({ website: users.website }).from(users).where(eq(users.handle, handle)).limit(1);
+      const [row] = await db
+        .select({ website: users.website, createdAt: users.createdAt })
+        .from(users)
+        .where(eq(users.handle, handle))
+        .limit(1);
       if (row?.website) website = row.website;
+      if (row?.createdAt) joinedAt = row.createdAt.toISOString();
     } catch {
       // Fall back to whatever the seed catalog provided.
     }
@@ -48,6 +56,7 @@ export async function GET(
     website,
     avatarUrl: creator.avatarUrl ?? null,
     packageCount: creator.packageCount,
+    joinedAt,
     totals: { stars: totals.stars, downloads: totals.downloads },
   });
 }
