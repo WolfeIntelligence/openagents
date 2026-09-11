@@ -31,6 +31,7 @@ import { JsonLd } from "@/components/JsonLd";
 import { buildSoftwareSourceCodeLd } from "@/lib/seo";
 import { formatPricing } from "@/lib/format";
 import { getActivePurchase } from "@/lib/purchases";
+import { AddToCollection } from "@/components/AddToCollection";
 
 type Params = { owner: string; name: string };
 type TabId = "readme" | "files" | "manifest" | "versions" | "reviews";
@@ -223,6 +224,12 @@ export default async function PackagePage({
                 name={name}
                 initialStars={pkg.stats.stars}
                 initialStarred={starred}
+                signedIn={Boolean(session?.user?.id)}
+                enabled={starsEnabled}
+              />
+              <AddToCollection
+                owner={owner}
+                name={name}
                 signedIn={Boolean(session?.user?.id)}
                 enabled={starsEnabled}
               />
