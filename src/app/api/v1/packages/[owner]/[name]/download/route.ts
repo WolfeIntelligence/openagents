@@ -2,18 +2,14 @@ import { NextRequest } from "next/server";
 import { getCatalog } from "@/lib/catalog";
 import { auth } from "@/lib/auth";
 import { resolveAccess, type Access } from "@/lib/access";
-import { error, json, preflight, withCors } from "@/lib/api";
+import { error, preflight, withCors } from "@/lib/api";
 import { packageTarballWithDigest, tarballHeaders } from "@/lib/tarball";
 import { recordDownload } from "@/lib/stats";
 import { recordDownloadEvent } from "@/lib/analytics";
-import { clientIp, rateLimit } from "@/lib/ratelimit";
+import { clientIp, RATE_LIMITS, withRateLimit } from "@/lib/ratelimit";
 import { RUNTIME_IDS, type Package } from "@/lib/types";
 
 export const runtime = "nodejs";
-
-// 60 requests/min/IP — generous for real installs, tight enough to blunt the
-// unrated-limited counter inflation described in B10.
-const GET_RATE_LIMIT = { limit: 60, windowMs: 60_000 };
 
 /**
  * `?runtime=<id>` is accepted (and validated) and, since G-A3/analytics.ts,
@@ -77,13 +73,11 @@ export async function GET(
   const runtimeError = invalidRuntimeParam(request);
   if (runtimeError) return runtimeError;
 
-  const limited = rateLimit(`download:${clientIp(request)}`, GET_RATE_LIMIT);
-  if (!limited.ok) {
-    return json(
-      { error: "too many download requests, slow down" },
-      { status: 429, headers: { "Retry-After": String(limited.retryAfterSeconds) } }
-    );
-  }
+  const limited = await withRateLimit(request, "download", {
+    ...RATE_LIMITS.download,
+    message: "too many download requests, slow down",
+  });
+  if (limited) return limited;
 
   const { owner, name } = await params;
   const loaded = await loadAccess(owner, name);

@@ -5,7 +5,7 @@ import { getRequester, hasScope } from "@/lib/requester";
 import { isDbEnabled } from "@/lib/db/client";
 import { error, json, preflight } from "@/lib/api";
 import { getStatsFor, isStarred, toggleStar } from "@/lib/stats";
-import { clientIp, rateLimit } from "@/lib/ratelimit";
+import { clientIp, RATE_LIMITS, withRateLimit } from "@/lib/ratelimit";
 
 export const runtime = "nodejs";
 
@@ -16,10 +16,11 @@ export const runtime = "nodejs";
 // One star per user per package, enforced by the primary key on `stars`, so the
 // count is always the number of distinct people who pressed the button. There is
 // no way to set it to an arbitrary value.
-
-// 30 requests/min/IP on the mutating endpoint only — GET is read-only and cheap
-// enough (see below) not to need its own budget.
-const POST_RATE_LIMIT = { limit: 30, windowMs: 60_000 };
+//
+// 30 requests/min on the mutating endpoint only — GET is read-only and cheap
+// enough (see below) not to need its own budget. Keyed by user id when signed
+// in (the common case, since starring requires it a few lines down anyway),
+// else by IP for the anonymous request that's about to get a 401.
 
 async function resolve(owner: string, name: string) {
   const catalog = await getCatalog();
@@ -64,19 +65,17 @@ export async function POST(
     return error(503, "stars require a database; none is configured on this deployment");
   }
 
-  const limited = rateLimit(`star:${clientIp(request)}`, POST_RATE_LIMIT);
-  if (!limited.ok) {
-    return json(
-      { error: "too many requests, slow down" },
-      { status: 429, headers: { "Retry-After": String(limited.retryAfterSeconds) } }
-    );
-  }
+  // Resolved before rate limiting so the key can reflect the signed-in user
+  // rather than always falling back to IP.
+  const requester = await getRequester(request);
+  const key = requester ? `star:user:${requester.id}` : `star:ip:${clientIp(request)}`;
+  const limited = await withRateLimit(request, "star", { ...RATE_LIMITS.star, key });
+  if (limited) return limited;
 
   if (!(await resolve(owner, name))) {
     return error(404, `package not found: ${owner}/${name}`);
   }
 
-  const requester = await getRequester(request);
   if (!requester) {
     return error(401, "sign in to star a package");
   }

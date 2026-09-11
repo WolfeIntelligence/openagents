@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { connection } from "next/server";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Header } from "@/components/Header";
@@ -26,7 +27,16 @@ export const metadata: Metadata = {
   alternates: { canonical: "./", types: { "application/rss+xml": "/feed.xml" } },
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default async function RootLayout({ children }: LayoutProps<"/">) {
+  // The enforcing, nonce-based CSP from src/proxy.ts only works with dynamic
+  // rendering — a statically prerendered shell has no per-request nonce to
+  // embed, so its scripts (including Next's own bootstrap script) would ship
+  // with none and get blocked by the browser. `connection()` opts the whole
+  // tree into dynamic rendering, which is what the CSP guide recommends for
+  // nonce-based CSP. See node_modules/next/dist/docs/.../content-security-policy.md
+  // ("Forcing dynamic rendering").
+  await connection();
+
   return (
     <html
       lang="en"

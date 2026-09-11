@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { getRequester } from "@/lib/requester";
 import { isDbEnabled } from "@/lib/db/client";
 import { error, json, preflight } from "@/lib/api";
-import { clientIp, rateLimit } from "@/lib/ratelimit";
+import { clientIp, RATE_LIMITS, withRateLimit } from "@/lib/ratelimit";
 import { createReport, PackageActionError } from "@/lib/moderation";
 
 export const runtime = "nodejs";
@@ -13,8 +13,6 @@ export const runtime = "nodejs";
 // Anonymous reports are allowed (reporterUserId stays null) but rate-limited
 // harder per IP than a signed-in report per user, since an IP is a much
 // coarser and more spoofable identity than an authenticated account.
-const ANON_RATE_LIMIT = { limit: 3, windowMs: 60 * 60_000 };
-const SIGNED_IN_RATE_LIMIT = { limit: 10, windowMs: 60 * 60_000 };
 
 export async function POST(
   request: NextRequest,
@@ -28,13 +26,12 @@ export async function POST(
 
   const requester = await getRequester(request);
   const key = requester ? `report:user:${requester.id}` : `report:ip:${clientIp(request)}`;
-  const limited = rateLimit(key, requester ? SIGNED_IN_RATE_LIMIT : ANON_RATE_LIMIT);
-  if (!limited.ok) {
-    return json(
-      { error: "too many reports, slow down" },
-      { status: 429, headers: { "Retry-After": String(limited.retryAfterSeconds) } }
-    );
-  }
+  const limited = await withRateLimit(request, "report", {
+    ...(requester ? RATE_LIMITS.reportSignedIn : RATE_LIMITS.reportAnonymous),
+    key,
+    message: "too many reports, slow down",
+  });
+  if (limited) return limited;
 
   const body: unknown = await request.json().catch(() => null);
   const { reason, details } = (body ?? {}) as { reason?: unknown; details?: unknown };
