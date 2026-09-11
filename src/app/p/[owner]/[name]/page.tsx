@@ -15,7 +15,6 @@ import { Markdown } from "@/components/Markdown";
 import { StarButton } from "@/components/StarButton";
 import { isStarred } from "@/lib/stats";
 import { isDbEnabled } from "@/lib/db/client";
-import { formatPrice } from "@/lib/format";
 import { getRequester } from "@/lib/requester";
 import { isAdmin } from "@/lib/admin";
 import { packageHasPurchases } from "@/lib/moderation";
@@ -30,6 +29,8 @@ import { RelatedPackages } from "@/components/RelatedPackages";
 import { absoluteUrl, cliSpec } from "@/lib/site";
 import { JsonLd } from "@/components/JsonLd";
 import { buildSoftwareSourceCodeLd } from "@/lib/seo";
+import { formatPricing } from "@/lib/format";
+import { getActivePurchase } from "@/lib/purchases";
 
 type Params = { owner: string; name: string };
 type TabId = "readme" | "files" | "manifest" | "versions" | "reviews";
@@ -133,6 +134,13 @@ export default async function PackagePage({
   const starred = session?.user?.id ? await isStarred(session.user.id, owner, name) : false;
 
   const jsonLd = buildSoftwareSourceCodeLd({ pkg, creator });
+  // Feeds only the BuyButton branch below ("Subscribed — renews on <date>" vs. "You
+  // own this package.") — null whenever there's nothing to show one (not owned, no
+  // session, or a one-time purchase, which has no renewal date to report).
+  const activePurchase =
+    owns && !isOwner && session?.user?.id
+      ? await getActivePurchase(session.user.id, owner, name)
+      : null;
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
@@ -233,13 +241,19 @@ export default async function PackagePage({
                   >
                     Download .tgz
                   </a>
-                  {!isOwner && <span className="text-xs text-fg-subtle">You own this package.</span>}
+                  {!isOwner && (
+                    <span className="text-xs text-fg-subtle">
+                      {activePurchase?.kind === "subscription" && activePurchase.expiresAt
+                        ? `Subscribed — renews on ${activePurchase.expiresAt.toLocaleDateString()}`
+                        : "You own this package."}
+                    </span>
+                  )}
                 </>
               ) : (
                 <BuyButton
                   owner={owner}
                   name={name}
-                  label={`Buy — ${formatPrice(manifest.pricing.amountCents, manifest.pricing.currency)}`}
+                  label={`${manifest.pricing.model === "subscription" ? "Subscribe" : "Buy"} — ${formatPricing(manifest.pricing)}`}
                 />
               )}
             </div>

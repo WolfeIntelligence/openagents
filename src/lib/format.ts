@@ -2,6 +2,8 @@
 // button label, purchase history, payout totals). Dependency-free so it's safe to
 // import from client components as well as server code.
 
+import type { Pricing } from "@/lib/types";
+
 /** Stripe's zero-decimal currencies: `amountCents` for these is already a whole unit
  *  (e.g. amountCents=500 for JPY means ¥500, not ¥5.00 — there's no minor unit). */
 export const ZERO_DECIMAL_CURRENCIES = new Set([
@@ -47,4 +49,18 @@ export function formatPrice(amountCents: number, currency: string): string {
   } catch {
     return `${amount.toFixed(2)} ${upper}`;
   }
+}
+
+/** Formats a package's price for display, appending a billing-period suffix for
+ *  subscriptions (`"$5.00/month"`, `"$50.00/year"`). Free packages (by model or a
+ *  zero amount) always render as "Free" regardless of model. A subscription with no
+ *  `interval` set falls back to "month" — the same default `createCheckoutSession`
+ *  uses, so the displayed price always matches what a buyer is actually charged. */
+export function formatPricing(pricing: Pricing): string {
+  if (pricing.model === "free" || pricing.amountCents === 0) return "Free";
+  const amount = formatPrice(pricing.amountCents, pricing.currency);
+  if (pricing.model === "subscription") {
+    return `${amount}/${pricing.interval ?? "month"}`;
+  }
+  return amount;
 }
