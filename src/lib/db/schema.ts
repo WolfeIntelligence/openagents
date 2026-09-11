@@ -6,8 +6,10 @@
 //
 // This module has no side effects and requires no env vars to import.
 
+import { sql } from "drizzle-orm";
 import {
   boolean,
+  index,
   integer,
   jsonb,
   pgTable,
@@ -17,6 +19,7 @@ import {
   unique,
   uuid,
 } from "drizzle-orm/pg-core";
+import type { PgColumn } from "drizzle-orm/pg-core";
 import type { AdapterAccountType } from "next-auth/adapters";
 
 // ---------------------------------------------------------------------------
@@ -37,6 +40,9 @@ export const users = pgTable("user", {
   bio: text("bio"),
   stripeAccountId: text("stripeAccountId"),
   stripeOnboarded: boolean("stripeOnboarded").notNull().default(false),
+  /** Stripe Customer used for the buyer side (subscriptions, billing portal). */
+  stripeCustomerId: text("stripeCustomerId"),
+  createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
   website: text("website"),
   // Moderation role. Granted by hand (or via ADMIN_HANDLES env) — there is no UI to grant it.
   isAdmin: boolean("isAdmin").notNull().default(false),
@@ -88,6 +94,41 @@ export const verificationTokens = pgTable(
 // OpenAgents domain tables
 // ---------------------------------------------------------------------------
 
+/**
+ * The exact full-text-search expression indexed by `packages_fts_idx` below.
+ *
+ * Defined as a function of the four/five columns it touches (rather than a
+ * plain `sql` constant closing over the `packages` table) so it can be built
+ * twice from the *same source* without a circular import: once here, inside
+ * `packages`'s own index list — where `packages` doesn't exist as a value
+ * yet, only `t` (the table being defined) does — and once from
+ * `src/lib/catalog/db.ts`'s search query, called as
+ * `packagesFtsExpression(packages)` after the table is fully defined. Postgres
+ * can only use a functional GIN index when the query expression matches the
+ * indexed expression byte-for-byte, so this function is the single source of
+ * truth for both sides; never inline this expression again elsewhere.
+ *
+ * Tags are folded in as the jsonb's text form (`["a","b"]`) rather than via a
+ * `jsonb_array_elements_text` subquery: index expressions must be immutable and
+ * may not contain subqueries, and `to_tsvector` drops the brackets and quotes
+ * anyway, so the tokens are the same.
+ */
+export function packagesFtsExpression(t: {
+  title: PgColumn;
+  summary: PgColumn;
+  name: PgColumn;
+  owner: PgColumn;
+  tags: PgColumn;
+}) {
+  return sql`to_tsvector('english',
+      coalesce(${t.title}, '') || ' ' ||
+      coalesce(${t.summary}, '') || ' ' ||
+      ${t.name} || ' ' ||
+      ${t.owner} || ' ' ||
+      coalesce(${t.tags}::text, '')
+    )`;
+}
+
 export const packages = pgTable(
   "packages",
   {
@@ -115,7 +156,20 @@ export const packages = pgTable(
     createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
     updatedAt: timestamp("updatedAt", { mode: "date" }).notNull().defaultNow(),
   },
-  (t) => [unique("packages_owner_name_unique").on(t.owner, t.name)]
+  (t) => [
+    unique("packages_owner_name_unique").on(t.owner, t.name),
+    // G-O5 / GIN index for full-text search: indexes the exact expression
+    // catalog/db.ts's `tsMatchCondition` matches against (via the shared
+    // `packagesFtsExpression` above), so the planner can use this index
+    // instead of computing `to_tsvector` per row on every search.
+    index("packages_fts_idx").using("gin", packagesFtsExpression(t)),
+    // Owner-scoped listings (creator pages, `?owner=`, facet dimension skips)
+    // and the admin/moderation status filter are both common enough to want
+    // their own btree index rather than relying on the (owner, name) unique
+    // index's leading column alone.
+    index("packages_owner_idx").on(t.owner),
+    index("packages_status_idx").on(t.status),
+  ]
 );
 
 export const packageVersions = pgTable(
@@ -144,6 +198,10 @@ export const packageFiles = pgTable("package_files", {
   path: text("path").notNull(),
   size: integer("size").notNull(),
   content: text("content").notNull(),
+  /** "utf8" for text (content is the text) or "base64" for binary (content is base64). */
+  encoding: text("encoding").notNull().default("utf8"),
+  /** POSIX file mode (e.g. 0o755 for executable scripts); null = default 0o644. */
+  mode: integer("mode"),
 });
 
 export const purchases = pgTable(
@@ -164,12 +222,22 @@ export const purchases = pgTable(
     currency: text("currency"),
     /** Stripe-hosted receipt for the charge, when the webhook could resolve one. */
     receiptUrl: text("receiptUrl"),
+    /** Subscription purchases: the Stripe Subscription and when paid-through access ends
+     *  (null = perpetual one-time purchase). */
+    stripeSubscriptionId: text("stripeSubscriptionId"),
+    expiresAt: timestamp("expiresAt", { mode: "date" }),
     status: text("status").notNull().default("pending"), // pending | paid | failed | refunded
     createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
   },
-  // One purchase row per Stripe Checkout Session: webhook redeliveries and the
-  // success-page fallback both upsert against this rather than inserting twice.
-  (t) => [unique("purchases_stripe_session_unique").on(t.stripeSessionId)]
+  (t) => [
+    // One purchase row per Stripe Checkout Session: webhook redeliveries and the
+    // success-page fallback both upsert against this rather than inserting twice.
+    unique("purchases_stripe_session_unique").on(t.stripeSessionId),
+    // "my purchases" / entitlement checks look up by (user, package); the
+    // webhook and success-page fallback look up by payment intent.
+    index("purchases_user_package_idx").on(t.userId, t.packageId),
+    index("purchases_payment_intent_idx").on(t.stripePaymentIntent),
+  ]
 );
 
 // ---------------------------------------------------------------------------
@@ -209,7 +277,12 @@ export const stars = pgTable(
     name: text("name").notNull(),
     createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
   },
-  (t) => [primaryKey({ columns: [t.userId, t.owner, t.name] })]
+  (t) => [
+    primaryKey({ columns: [t.userId, t.owner, t.name] }),
+    // Star counts/toggles are looked up by (owner, name) across all users, not
+    // just by the (userId, owner, name) primary key's leading column.
+    index("stars_owner_name_idx").on(t.owner, t.name),
+  ]
 );
 
 // ---------------------------------------------------------------------------
@@ -249,7 +322,12 @@ export const downloadEvents = pgTable(
     day: text("day").notNull(),
     createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
   },
-  (t) => [unique("download_events_unique_per_day").on(t.owner, t.name, t.clientHash, t.day)]
+  (t) => [
+    unique("download_events_unique_per_day").on(t.owner, t.name, t.clientHash, t.day),
+    // Backs the trending query (`sortByTrending` in catalog/db.ts), which
+    // groups by (owner, name) over a `day >=` window.
+    index("download_events_owner_name_day_idx").on(t.owner, t.name, t.day),
+  ]
 );
 
 export const reports = pgTable("reports", {
@@ -277,5 +355,79 @@ export const reviews = pgTable(
     createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
     updatedAt: timestamp("updatedAt", { mode: "date" }).notNull().defaultNow(),
   },
-  (t) => [unique("reviews_one_per_user_per_package").on(t.userId, t.owner, t.name)]
+  (t) => [
+    unique("reviews_one_per_user_per_package").on(t.userId, t.owner, t.name),
+    // Package detail pages list all reviews for one (owner, name).
+    index("reviews_owner_name_idx").on(t.owner, t.name),
+  ]
+);
+
+// ---------------------------------------------------------------------------
+// Batch-3 tables: durable rate limits, collections, GitHub package sources.
+// ---------------------------------------------------------------------------
+
+/** Fixed-window counters shared by every serverless instance. `key` is
+ *  "<route>:<client>" and `windowStart` the start of the current window. */
+export const rateLimits = pgTable("rate_limits", {
+  key: text("key").primaryKey(),
+  count: integer("count").notNull().default(0),
+  windowStart: timestamp("windowStart", { mode: "date" }).notNull().defaultNow(),
+});
+
+export const collections = pgTable(
+  "collections",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    ownerUserId: text("ownerUserId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** Owner's handle at creation time; used in the URL /c/<handle>/<slug>. */
+    ownerHandle: text("ownerHandle").notNull(),
+    slug: text("slug").notNull(),
+    title: text("title").notNull(),
+    description: text("description"),
+    isPublic: boolean("isPublic").notNull().default(true),
+    featured: boolean("featured").notNull().default(false),
+    createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updatedAt", { mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [unique("collections_owner_slug_unique").on(t.ownerHandle, t.slug)]
+);
+
+export const collectionItems = pgTable(
+  "collection_items",
+  {
+    collectionId: uuid("collectionId")
+      .notNull()
+      .references(() => collections.id, { onDelete: "cascade" }),
+    owner: text("owner").notNull(),
+    name: text("name").notNull(),
+    position: integer("position").notNull().default(0),
+    note: text("note"),
+    addedAt: timestamp("addedAt", { mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.collectionId, t.owner, t.name] })]
+);
+
+/** A package linked to a GitHub repository for automatic republishing. The seller
+ *  pastes `<site>/api/webhooks/github/<id>` plus the secret into the repo's webhook
+ *  settings; a release/tag push re-imports `subdir` at that ref. */
+export const packageSources = pgTable(
+  "package_sources",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    owner: text("owner").notNull(),
+    name: text("name").notNull(),
+    userId: text("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    repo: text("repo").notNull(), // "github-owner/repo"
+    ref: text("ref"), // branch or tag pattern; null = the pushed tag / default branch
+    subdir: text("subdir"),
+    secretHash: text("secretHash").notNull(),
+    lastSyncedAt: timestamp("lastSyncedAt", { mode: "date" }),
+    lastResult: text("lastResult"),
+    createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [unique("package_sources_package_unique").on(t.owner, t.name)]
 );

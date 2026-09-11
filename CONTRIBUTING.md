@@ -21,7 +21,15 @@ database required.
    when *not* to), how to install it per runtime, its declared inputs, an example
    invocation, and known limitations. Look at `catalog/openagents/pr-reviewer/README.md`
    for the shape reviewers expect.
-5. **Add the entry file and any supporting files** referenced in `files`.
+5. **Add the entry file and any supporting files** referenced in `files`. Binary
+   files (an icon, a small compiled asset) are allowed, up to **2 MB total** across
+   all binary files in the submission — see
+   [`src/content/docs/package-format.md`](./src/content/docs/package-format.md#binary-files)
+   for the `encoding`/`mode` fields. An executable helper script belongs under a
+   `scripts/` subdirectory of the package, and should carry the executable POSIX
+   bit (`chmod +x`) before you publish from a POSIX machine — `openagents publish`
+   preserves it into the tarball, so it stays executable for anyone who installs
+   the package.
 6. **Validate locally** before opening a PR:
    ```bash
    cd cli && npm install   # first time only
@@ -69,11 +77,11 @@ A package gets rejected (or sent back for changes) if it's:
 
 ## Paid packages
 
-Paid packages (`pricing.model: one-time` — `subscription` is reserved and not yet
-accepted) aren't added via PR to `catalog/` — they go through the hosted publish flow
-(sign-in + Stripe Connect) so payouts and the platform fee can be handled. See
-[`src/content/docs/publishing.md`](./src/content/docs/publishing.md) for the full path
-and content policy.
+Paid packages (`pricing.model: one-time` or `subscription`) aren't added via PR to
+`catalog/` — they go through the hosted publish flow (sign-in + Stripe Connect) so
+payouts and the platform fee can be handled, including on every subscription
+renewal. See [`src/content/docs/publishing.md`](./src/content/docs/publishing.md)
+for the full path and content policy.
 
 ## Code contributions
 

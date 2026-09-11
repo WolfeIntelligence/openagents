@@ -2,18 +2,14 @@ import { NextRequest } from "next/server";
 import { getFileAtVersion, getPackageVersion } from "@/lib/catalog/versions";
 import { auth } from "@/lib/auth";
 import { resolveAccess, type Access } from "@/lib/access";
-import { error, json, preflight, withCors } from "@/lib/api";
+import { error, preflight, withCors } from "@/lib/api";
 import { etagMatches, packageTarballWithDigest, tarballHeaders } from "@/lib/tarball";
 import { recordDownload } from "@/lib/stats";
 import { recordDownloadEvent } from "@/lib/analytics";
-import { clientIp, rateLimit } from "@/lib/ratelimit";
+import { clientIp, RATE_LIMITS, withRateLimit } from "@/lib/ratelimit";
 import { RUNTIME_IDS, type Package } from "@/lib/types";
 
 export const runtime = "nodejs";
-
-// Same budget as the "latest" download route (src/app/.../download/route.ts) —
-// this is just a pinned-version view of the same download.
-const GET_RATE_LIMIT = { limit: 60, windowMs: 60_000 };
 
 function invalidRuntimeParam(request: NextRequest) {
   const value = request.nextUrl.searchParams.get("runtime");
@@ -81,13 +77,14 @@ export async function GET(
   const runtimeError = invalidRuntimeParam(request);
   if (runtimeError) return runtimeError;
 
-  const limited = rateLimit(`download:${clientIp(request)}`, GET_RATE_LIMIT);
-  if (!limited.ok) {
-    return json(
-      { error: "too many download requests, slow down" },
-      { status: 429, headers: { "Retry-After": String(limited.retryAfterSeconds) } }
-    );
-  }
+  // Same key prefix ("download") as the "latest" route above — intentionally
+  // shares one budget per IP across both, since a pinned-version download is
+  // just another view of the same download.
+  const limited = await withRateLimit(request, "download", {
+    ...RATE_LIMITS.download,
+    message: "too many download requests, slow down",
+  });
+  if (limited) return limited;
 
   const { owner, name, version } = await params;
   const loaded = await loadAccess(owner, name, version);

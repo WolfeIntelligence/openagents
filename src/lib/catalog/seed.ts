@@ -14,6 +14,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { isExecutableName, isProbablyBinary } from "@/lib/files";
 import { parseManifest, validateManifestFiles } from "@/lib/manifest";
 import { buildCorrectedQuery, buildVocabulary, matchesTerms, rankByQuery, tokenize } from "@/lib/search";
 import {
@@ -83,6 +84,21 @@ function listFilesRecursive(dir: string, base: string = dir): string[] {
   return out;
 }
 
+/**
+ * POSIX file mode for a seed-catalog file, or `undefined` for the default
+ * 0o644. `fs.statSync(...).mode`'s executable bit is meaningful on POSIX
+ * (where the catalog's own `bin/`/`scripts/` files are checked out with it
+ * set), but Node reports a fixed, useless value for it on Windows — every
+ * file looks the same regardless of what a `chmod +x` on another OS did. So
+ * on Windows (and as a fallback anywhere the bit isn't set), fall back to
+ * `isExecutableName`'s name-based heuristic instead of trusting the stat.
+ */
+function seedFileMode(stat: fs.Stats, relPath: string): number | undefined {
+  const posixExecutable = process.platform !== "win32" && (stat.mode & 0o111) !== 0;
+  if (posixExecutable) return 0o755;
+  return isExecutableName(relPath) ? 0o755 : undefined;
+}
+
 function readJsonSafe<T>(filePath: string): T | null {
   if (!fs.existsSync(filePath)) return null;
   try {
@@ -122,7 +138,7 @@ function loadPackage(owner: string, name: string, pkgPath: string): Package | nu
     const full = path.join(pkgPath, f);
     const stat = fs.statSync(full);
     mtimes.push(stat.mtimeMs);
-    return { path: f, size: stat.size };
+    return { path: f, size: stat.size, mode: seedFileMode(stat, f) };
   });
 
   const meta = readJsonSafe<MetaFile>(path.join(pkgPath, ".meta.json")) ?? {};
@@ -393,8 +409,17 @@ async function getFile(owner: string, name: string, filePath: string): Promise<P
   const stat = fs.statSync(fullPath);
   if (!stat.isFile()) return null;
 
-  const content = fs.readFileSync(fullPath, "utf-8");
-  return { path: normalized, size: stat.size, content };
+  // Read as bytes first (not "utf-8") so a binary asset (image, pdf, ...) is
+  // sniffed correctly rather than mangled through a lossy text decode.
+  const buf = fs.readFileSync(fullPath);
+  const binary = isProbablyBinary(buf);
+  return {
+    path: normalized,
+    size: stat.size,
+    content: binary ? buf.toString("base64") : buf.toString("utf-8"),
+    encoding: binary ? "base64" : "utf8",
+    mode: seedFileMode(stat, normalized),
+  };
 }
 
 async function creator(handle: string): Promise<Creator | null> {

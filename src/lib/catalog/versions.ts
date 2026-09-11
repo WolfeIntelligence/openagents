@@ -79,7 +79,12 @@ export async function listVersions(owner: string, name: string): Promise<Package
 async function buildPackageForVersion(db: Db, row: PackageRow, versionRow: VersionRow): Promise<Package> {
   const [fileRows, allVersionRows, statsMap] = await Promise.all([
     db
-      .select({ path: packageFiles.path, size: packageFiles.size })
+      .select({
+        path: packageFiles.path,
+        size: packageFiles.size,
+        encoding: packageFiles.encoding,
+        mode: packageFiles.mode,
+      })
       .from(packageFiles)
       .where(eq(packageFiles.versionId, versionRow.id)),
     db.select().from(packageVersions).where(eq(packageVersions.packageId, row.id)),
@@ -94,7 +99,14 @@ async function buildPackageForVersion(db: Db, row: PackageRow, versionRow: Versi
     // current one — that's the whole point of a versioned lookup.
     manifest: versionRow.manifest as Manifest,
     readme: versionRow.readme,
-    files: fileRows.map((f): PackageFile => ({ path: f.path, size: f.size })),
+    files: fileRows.map(
+      (f): PackageFile => ({
+        path: f.path,
+        size: f.size,
+        encoding: f.encoding as "utf8" | "base64",
+        mode: f.mode ?? undefined,
+      })
+    ),
     versions: sortVersionsDesc(allVersionRows.map(toPackageVersion)),
     stats: statsMap.get(statsKey(row.owner, row.name)) ?? ZERO_STATS,
     featured: row.featured,
@@ -180,7 +192,15 @@ export async function getFileAtVersion(
           .from(packageFiles)
           .where(and(eq(packageFiles.versionId, versionRow.id), eq(packageFiles.path, filePath)))
           .limit(1);
-        return fileRow ? { path: fileRow.path, size: fileRow.size, content: fileRow.content } : null;
+        return fileRow
+          ? {
+              path: fileRow.path,
+              size: fileRow.size,
+              content: fileRow.content,
+              encoding: fileRow.encoding as "utf8" | "base64",
+              mode: fileRow.mode ?? undefined,
+            }
+          : null;
       }
     } catch (err) {
       console.error(

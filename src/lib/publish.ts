@@ -8,10 +8,17 @@ import { packageFiles, packages, packageVersions, users } from "@/lib/db/schema"
 import { ManifestError, parseManifest, validateManifestFiles } from "@/lib/manifest";
 import { isGreater, SemverError } from "@/lib/semver";
 import { isReservedHandle } from "@/lib/reserved";
+import { MAX_BINARY_BYTES } from "@/lib/files";
+import { invalidateCatalogCache } from "@/lib/catalog/cache";
 
 export interface PublishFile {
   path: string;
+  /** Text content, or base64 when `encoding` is "base64". */
   content: string;
+  /** "base64" for binary content; absent/"utf8" for text (the default). */
+  encoding?: "utf8" | "base64";
+  /** POSIX file mode. Only 0o644 and 0o755 are accepted — see `VALID_MODES`. */
+  mode?: number;
 }
 
 export interface PublishArgs {
@@ -53,8 +60,14 @@ export class PublishError extends Error {
 // ---------------------------------------------------------------------------
 
 const MAX_FILES = 200;
-const MAX_FILE_BYTES = 512 * 1024; // 512 KB
+const MAX_FILE_BYTES = 512 * 1024; // 512 KB — text files only; binary files get MAX_BINARY_BYTES instead.
 const MAX_TOTAL_BYTES = 2 * 1024 * 1024; // 2 MB
+
+/** The only file modes a publish accepts (regular / executable). Anything
+ *  else (setuid bits, a raw `0o100644`-style full stat mode, etc.) is
+ *  rejected outright rather than silently masked down — a caller sending
+ *  something else almost certainly made a mistake worth surfacing. */
+const VALID_MODES = new Set([0o644, 0o755]);
 
 function isUnsafePath(p: string): string | null {
   if (p.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(p)) return "absolute paths are not allowed";
@@ -62,6 +75,11 @@ function isUnsafePath(p: string): string | null {
   if (p.includes("\\")) return "backslashes are not allowed, use /";
   if (p.includes("\u0000")) return "NUL bytes are not allowed";
   return null;
+}
+
+/** Decoded byte length of one file's content, honoring `encoding`. */
+function decodedSize(f: PublishFile): number {
+  return f.encoding === "base64" ? Buffer.from(f.content, "base64").length : Buffer.byteLength(f.content, "utf8");
 }
 
 /** Returns a (possibly empty) list of upload-level error strings. Does not throw. */
@@ -80,13 +98,34 @@ function validateUpload(files: PublishFile[]): string[] {
       continue;
     }
 
-    const size = Buffer.byteLength(f.content, "utf8");
-    totalBytes += size;
-    if (size > MAX_FILE_BYTES) {
-      errors.push(`file too large: ${f.path} (${size} bytes, max ${MAX_FILE_BYTES})`);
+    if (f.mode !== undefined && !VALID_MODES.has(f.mode)) {
+      errors.push(
+        `invalid mode for "${f.path}": ${f.mode} (only ${[...VALID_MODES].map((m) => `0o${m.toString(8)}`).join(" or ")} are accepted)`
+      );
+      continue;
     }
-    if (f.content.includes("\u0000")) {
-      errors.push(`binary files are not supported yet: ${f.path}`);
+
+    const isBase64 = f.encoding === "base64";
+    // Binary files (sent as base64) count against the total using their
+    // decoded size, not the ~33% larger base64 string length — the total
+    // cap is a real-bytes budget, not a wire-size one.
+    const size = decodedSize(f);
+    totalBytes += size;
+
+    if (isBase64) {
+      if (size > MAX_BINARY_BYTES) {
+        errors.push(`file too large: ${f.path} (${size} bytes, max ${MAX_BINARY_BYTES})`);
+      }
+    } else {
+      if (size > MAX_FILE_BYTES) {
+        errors.push(`file too large: ${f.path} (${size} bytes, max ${MAX_FILE_BYTES})`);
+      }
+      // A NUL byte in text content means it's actually binary — those must be
+      // sent as base64 (`encoding: "base64"`) instead of silently truncating
+      // or corrupting on the way through Postgres `text`.
+      if (f.content.includes("\u0000")) {
+        errors.push(`binary files must be sent as base64 (encoding: "base64"): ${f.path}`);
+      }
     }
   }
 
@@ -181,8 +220,10 @@ export async function publishPackage({ userHandle, files, changelog }: PublishAr
     throw new PublishError(403, ["owner handle is reserved"]);
   }
 
-  if (manifest.pricing.model === "subscription") {
-    throw new PublishError(400, ["subscription pricing is not available yet; use one-time"]);
+  if (manifest.pricing.model === "subscription" && !manifest.pricing.interval) {
+    throw new PublishError(400, [
+      'subscription pricing needs pricing.interval ("month" or "year")',
+    ]);
   }
 
   if (!/^[a-z]{3}$/.test(manifest.pricing.currency)) {
@@ -332,12 +373,15 @@ export async function publishPackage({ userHandle, files, changelog }: PublishAr
       files.map((f) => ({
         versionId: versionRow.id,
         path: f.path,
-        size: Buffer.byteLength(f.content, "utf8"),
+        size: decodedSize(f),
         content: f.content,
+        encoding: f.encoding ?? "utf8",
+        mode: f.mode ?? null,
       }))
     );
   }
 
+  invalidateCatalogCache();
   return {
     id: `${manifest.owner}/${manifest.name}`,
     version: manifest.version,

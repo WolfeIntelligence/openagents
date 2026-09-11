@@ -4,6 +4,7 @@ import { isAdmin } from "@/lib/admin";
 import { isDbEnabled } from "@/lib/db/client";
 import { error, json, preflight } from "@/lib/api";
 import { isReviewRequired, PackageActionError, setPackageFeatured, setPackageStatus } from "@/lib/moderation";
+import { notifyPackageStatusChanged } from "@/lib/notify";
 
 export const runtime = "nodejs";
 
@@ -59,6 +60,12 @@ export async function POST(
         requireReview: isReviewRequired(),
       });
       result = { ...result, status: statusResult.status };
+      void notifyPackageStatusChanged({
+        owner,
+        name,
+        status: statusResult.status,
+        message: typeof reason === "string" ? reason : null,
+      });
     }
 
     if (typeof featured === "boolean") {

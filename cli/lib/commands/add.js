@@ -204,6 +204,14 @@ export async function installPackage({ owner, name, version, manifest, downloadU
 
 async function defaultExtract(buf, tmpDir) {
   const tar = await import("tar");
+  // `tar.x` preserves each entry's mode bit-for-bit on POSIX (Y3: the
+  // registry's tarballs now carry real modes — see src/lib/tarball.ts). On
+  // Windows, NTFS has no concept of a Unix executable bit, so `tar` silently
+  // drops it during extraction: the files land fine, but a package's bin/
+  // scripts need to be run explicitly (e.g. `sh script`) rather than
+  // executed directly. `copyDirRecursive` below re-applies whatever mode did
+  // make it through the extraction, so this limitation is Windows-only and
+  // not compounded by the flatten-copy step that follows.
   await pipeline(Readable.from(buf), tar.x({ cwd: tmpDir }));
 }
 
@@ -255,6 +263,16 @@ function copyDirRecursive(src, dest) {
       copyDirRecursive(s, d);
     } else if (entry.isFile()) {
       fs.copyFileSync(s, d);
+      // fs.copyFileSync does NOT carry over the source file's mode — the new
+      // file gets the default creation mode under the process umask — so
+      // without this, `tar.x`'s mode preservation above would be silently
+      // undone by this flatten-copy step for every install. Best-effort: an
+      // unreadable/unsettable mode isn't fatal to the install itself.
+      try {
+        fs.chmodSync(d, fs.statSync(s).mode);
+      } catch {
+        // ignore
+      }
     }
   }
 }

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getRequester, hasScope } from "@/lib/requester";
 import { isDbEnabled } from "@/lib/db/client";
 import { error, json, preflight } from "@/lib/api";
+import { RATE_LIMITS, withRateLimit } from "@/lib/ratelimit";
 import { publishPackage, PublishError } from "@/lib/publish";
 
 export const runtime = "nodejs";
@@ -12,6 +13,11 @@ const bodySchema = z.object({
     z.object({
       path: z.string().min(1),
       content: z.string(),
+      // "base64" when `content` is base64-encoded binary; absent means text
+      // (publishPackage's own validation rejects anything else, plus the
+      // 0o644/0o755-only mode check — see VALID_MODES in lib/publish.ts).
+      encoding: z.enum(["utf8", "base64"]).optional(),
+      mode: z.number().int().optional(),
     })
   ),
   // Optional "what changed in this version" note; publishPackage falls back to
@@ -34,6 +40,12 @@ export async function POST(req: NextRequest) {
   if (!requester.handle) {
     return error(401, "unauthorized");
   }
+
+  const limited = await withRateLimit(req, "publish", {
+    ...RATE_LIMITS.publish,
+    key: `publish:${requester.id}`,
+  });
+  if (limited) return limited;
 
   const body = await req.json().catch(() => null);
   const parsed = bodySchema.safeParse(body);

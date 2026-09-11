@@ -24,10 +24,12 @@ export async function handleSignOut() {
 const LINKS: { href: string; label: string }[] = [
   { href: "/settings/profile", label: "Profile" },
   { href: "/settings/tokens", label: "API tokens" },
+  { href: "/settings/sources", label: "GitHub sync" },
   { href: "/dashboard", label: "Dashboard" },
   { href: "/stars", label: "Stars" },
   { href: "/purchases", label: "Purchases" },
   { href: "/settings/payouts", label: "Payouts" },
+  { href: "/settings/account", label: "Account" },
 ];
 
 export function UserMenu({ name, image, handle, isAdmin = false }: UserMenuProps) {

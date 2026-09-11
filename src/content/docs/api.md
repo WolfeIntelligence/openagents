@@ -548,7 +548,282 @@ curl -X PUT "https://openagents-nu.vercel.app/api/v1/profile" \
 
 `handle` can only be changed while the user owns **zero** packages — once you've
 published, your handle is load-bearing for every `owner/name` id and install command
-that references you, so it locks.
+that references you, so it locks. Both the public (`GET /api/v1/users/{handle}`) and
+own-profile shapes also carry `joinedAt` (the account's creation date) alongside
+`packages`.
+
+## Account
+
+### `GET /api/v1/account/export`
+
+Download everything tied to the signed-in account as a single JSON file: profile,
+owned packages and their versions, purchases (including subscriptions), reviews
+written, tokens (metadata only — never plaintext), stars, and collections. Session
+only — this is a personal-data export, not something a token should be able to
+trigger on someone's behalf.
+
+```bash
+curl "https://openagents-nu.vercel.app/api/v1/account/export" -H "Cookie: <session cookie>" -OJ
+```
+
+Response: `200 OK`, `Content-Type: application/json`,
+`Content-Disposition: attachment; filename="openagents-export-<handle>-<date>.json"`.
+
+- `401 Unauthorized` — no session.
+
+### `DELETE /api/v1/account`
+
+Permanently delete the signed-in account. Session only. To make an accidental call
+harder, the body must echo the caller's own handle back:
+
+```bash
+curl -X DELETE "https://openagents-nu.vercel.app/api/v1/account" \
+  -H "Cookie: <session cookie>" -H "Content-Type: application/json" \
+  -d '{"confirm": "zach"}'
+```
+
+```ts
+// Body
+{ confirm: string } // must exactly equal the caller's own handle
+
+// 204 No Content
+// 400 Bad Request — `confirm` doesn't match the handle
+// 401 Unauthorized — no session
+// 409 Conflict — the account owns a package with at least one sale, or holds an
+//                 active subscription (as buyer or as a seller with active
+//                 subscribers) — retire or transfer those first (see Publishing)
+```
+
+This mirrors the package-deletion rule (`POST /api/v1/packages/{owner}/{name}/status`
+with `{"action": "delete"}`): once money has moved, the row sticks around so buyers
+and sellers keep their history.
+
+## Collections
+
+Curated, ordered lists of packages — a creator's "starter kit," a team's approved
+toolset, a themed roundup. A collection belongs to one user and is either public
+(shown on `/collections`, `/c/{handle}/{slug}`, the landing page rail, and the
+sitemap) or unlisted (readable by direct link only, like an unlisted package).
+
+### `GET /api/v1/collections`
+
+List collections.
+
+**Query parameters** (all optional): `featured` (`1` for editorially-featured
+collections only), `owner` (a handle — that user's public collections), `limit`
+(default `24`, max `100`), `offset`.
+
+```bash
+curl "https://openagents-nu.vercel.app/api/v1/collections?featured=1"
+```
+
+```ts
+// 200 OK
+{
+  items: Array<{
+    id: string;
+    ownerHandle: string;
+    slug: string;
+    title: string;
+    description?: string;
+    isPublic: boolean;
+    featured: boolean;
+    itemCount: number;
+    createdAt: string;
+    updatedAt: string;
+  }>;
+  total: number;
+}
+```
+
+### `POST /api/v1/collections`
+
+Create a collection. Session or a token with the `publish` scope.
+
+```bash
+curl -X POST "https://openagents-nu.vercel.app/api/v1/collections" \
+  -H "Cookie: <session cookie>" -H "Content-Type: application/json" \
+  -d '{"title": "My favorite review workflows", "isPublic": true}'
+```
+
+```ts
+// Body
+{ title: string; slug?: string; description?: string; isPublic?: boolean }
+// slug defaults to a slugified title; isPublic defaults to true
+
+// 201 Created
+{ id, ownerHandle, slug, title, description, isPublic, featured: false, itemCount: 0, createdAt, updatedAt }
+
+// 401 Unauthorized
+// 403 Forbidden — token missing the `publish` scope
+// 409 Conflict — the caller already has a collection with this slug
+```
+
+### `GET/PATCH/DELETE /api/v1/collections/{handle}/{slug}`
+
+Fetch, update, or delete one collection, including its items (each with the
+package's current `PackageSummary` inlined, so a client doesn't need a second
+round-trip per item).
+
+```bash
+curl "https://openagents-nu.vercel.app/api/v1/collections/zach/starter-kit"
+```
+
+```ts
+// GET — 200 OK
+{
+  id: string; ownerHandle: string; slug: string; title: string; description?: string;
+  isPublic: boolean; featured: boolean; createdAt: string; updatedAt: string;
+  items: Array<{ owner: string; name: string; note?: string; position: number; addedAt: string; package: PackageSummary }>;
+}
+// 404 Not Found — doesn't exist, or is unlisted and the caller isn't the owner
+
+// PATCH — same body shape as POST above (all fields optional); owner or admin only
+// 200 OK — the updated collection (without items)
+
+// DELETE — owner or admin only
+// 204 No Content
+```
+
+### `PUT/DELETE /api/v1/collections/{handle}/{slug}/items/{owner}/{name}`
+
+Add (or reorder/annotate) and remove one package from a collection. Owner or admin
+only.
+
+```bash
+curl -X PUT "https://openagents-nu.vercel.app/api/v1/collections/zach/starter-kit/items/openagents/pr-reviewer" \
+  -H "Cookie: <session cookie>" -H "Content-Type: application/json" \
+  -d '{"note": "Run this first on every PR.", "position": 0}'
+```
+
+```ts
+// PUT body (owner/name are also in the URL; both accepted for symmetry with other
+// routes, but the URL wins if they conflict)
+{ owner: string; name: string; note?: string; position?: number }
+
+// 200 OK — the updated item
+// 400 Bad Request — package doesn't exist
+// 401 Unauthorized / 403 Forbidden — not the collection's owner/admin
+
+// DELETE — 204 No Content
+```
+
+A package's own page shows an "Add to collection" action for the signed-in owner's
+collections, and `/c/{handle}/{slug}` renders a "copy install-all" command
+(`openagents add` for every item in the collection, one per line) so a visitor can
+install the whole set in one paste.
+
+### `POST /api/v1/admin/collections/{handle}/{slug}`
+
+Toggle a collection's editorial `featured` flag. Admin only — same admin check as
+the rest of `/api/v1/admin/*`.
+
+```ts
+// Body
+{ featured: boolean }
+
+// 200 OK — the updated collection
+// 401 Unauthorized / 403 Forbidden — same as the other admin routes
+```
+
+## Badges
+
+### `GET /api/v1/packages/{owner}/{name}/badge`
+
+An embeddable SVG status badge (shields.io-style) for a package's README or a
+creator's own site.
+
+**Query parameters:** `type` — one of `version` | `downloads` | `stars` | `rating`,
+default `version`.
+
+```bash
+curl "https://openagents-nu.vercel.app/api/v1/packages/openagents/pr-reviewer/badge?type=downloads"
+```
+
+Response: `200 OK`, `Content-Type: image/svg+xml`, cacheable
+(`Cache-Control: public, max-age=300`) — short-lived since the underlying numbers
+change, but cheap to regenerate.
+
+`/dashboard` shows ready-to-paste Markdown snippets
+(`![downloads](.../badge?type=downloads)`) for each of your live packages.
+
+## Sharing & SEO
+
+- **Open Graph images** — `/p/{owner}/{name}/opengraph-image` and
+  `/u/{owner}/opengraph-image` are generated on request; link previews on social
+  platforms and chat apps need no extra API call, just the page URL.
+- **JSON-LD** — every package page (`/p/{owner}/{name}`) embeds a `SoftwareSourceCode`
+  structured-data block for search engines.
+- **RSS** — [`/feed.xml`](/feed.xml) lists newly published and newly updated packages.
+- **Badges** — see [above](#badges).
+
+## GitHub auto-sync
+
+Link a package to a GitHub repository so a new release (or tag push) republishes it
+automatically, instead of running `openagents publish` by hand each time.
+
+### `PUT/GET/DELETE /api/v1/packages/{owner}/{name}/source`
+
+Owner or admin only; session or a token with the `publish` scope.
+
+```bash
+curl -X PUT "https://openagents-nu.vercel.app/api/v1/packages/me/my-package/source" \
+  -H "Authorization: Bearer oa_..." -H "Content-Type: application/json" \
+  -d '{"repo": "me/my-package", "subdir": "packages/my-package"}'
+```
+
+```ts
+// PUT body
+{ repo: string; ref?: string; subdir?: string } // ref defaults to the repo's default branch
+
+// PUT — 201 Created (first time) / 200 OK (updating an existing link)
+{
+  id: string;
+  repo: string;
+  ref?: string;
+  subdir?: string;
+  webhookUrl: string;   // "<site>/api/webhooks/github/{id}" — paste into the repo's webhook settings
+  secret: string;       // shown exactly once — paste into the same webhook config; never retrievable again
+}
+
+// GET — 200 OK, same shape minus `secret`
+// DELETE — 204 No Content (unlinks; does not touch anything already published)
+
+// 400 Bad Request — repo/subdir couldn't be resolved
+// 401 Unauthorized / 403 Forbidden — not the owner/admin, or token missing `publish`
+// 404 Not Found — no source linked (GET/DELETE)
+```
+
+### `POST /api/v1/packages/{owner}/{name}/source/sync`
+
+Trigger a sync right now instead of waiting for the next release/tag push — same
+validation and `REQUIRE_REVIEW` behavior as
+[`POST /api/v1/publish/import`](#post-apiv1publishimport).
+
+```ts
+// 201 Created — same shape as POST /api/v1/publish, when a new version was published
+// 200 OK — { synced: false, reason: "up to date" } when nothing changed
+// 400/401/403 — same as the route above
+```
+
+### `POST /api/webhooks/github/{id}`
+
+Receiver for one linked source's GitHub webhook — `release` (`published` action) and
+tag-push events. Verified against that source's secret (HMAC over the raw body,
+compared against `X-Hub-Signature-256`, the same scheme GitHub itself uses); falls
+back to signing against `SOURCE_WEBHOOK_KEY` (or `AUTH_SECRET` if that isn't set —
+see [Self-Hosting](/docs/self-hosting)) for the outer request when a deployment wants
+one shared verification key across all sources. Imports the manifest at the
+released/tagged ref and publishes a new version exactly when its `version` is
+strictly greater than the currently published one — a re-delivered or out-of-order
+webhook is a safe no-op, not a duplicate publish. Not intended for direct client
+calls; `/settings/sources` shows each linked package's last sync result.
+
+```ts
+// 200 OK — { synced: boolean, version?: string }
+// 401 Unauthorized — signature didn't verify
+// 404 Not Found — unknown source id
+```
 
 ## `GET /api/v1/admin/queue`
 
@@ -607,7 +882,8 @@ app never crashes for missing auth env vars.
 
 ## `POST /api/checkout`
 
-Creates a Stripe Checkout session for a paid package purchase.
+Creates a Stripe Checkout session for a paid package purchase — one-time or
+subscription, depending on the package's `pricing.model`.
 
 ```bash
 curl -X POST "https://openagents-nu.vercel.app/api/checkout" \
@@ -620,30 +896,81 @@ curl -X POST "https://openagents-nu.vercel.app/api/checkout" \
 { url: string } // redirect the buyer here to complete checkout
 
 // 400 Bad Request — the purchase can't proceed
-{ error: string } // "package is free", "subscriptions are not available yet",
-                   // "you already own this package", or "you can't buy your own package"
+{ error: string } // "package is free", "you already own this package",
+                   // "you already have an active subscription to this package",
+                   // or "you can't buy your own package"
 
 // 401 Unauthorized — no session
+// 429 Too Many Requests — rate-limited
 // 503 Service Unavailable — when STRIPE_SECRET_KEY isn't configured on this deployment
 { error: "payments are not enabled on this deployment" }
 ```
 
+For `pricing.model: one-time`, this is a normal single-charge Checkout session. For
+`pricing.model: subscription`, Checkout runs in **subscription mode** instead:
+
+- The buyer gets (or reuses, if they've bought a subscription before) a Stripe
+  **Customer**, recorded on `users.stripeCustomerId`.
+- The platform fee (`PLATFORM_FEE_BPS`) is applied via `application_fee_percent` on
+  the subscription itself, so it's taken on **every renewal**, not just the first
+  invoice — the remainder is transferred to the seller's connected Stripe account,
+  same as a one-time sale.
+- The resulting `purchases` row carries `stripeSubscriptionId` and an `expiresAt`
+  set to the current billing period's end; access is checked against `expiresAt`
+  everywhere a paid download/file-read is gated, exactly like an unlimited one-time
+  purchase except it has an expiry that keeps rolling forward on each successful
+  renewal (see the webhook events below) instead of being open-ended.
+
 On completion, Stripe redirects the buyer to the package page with
 `?checkout=success&session_id={CHECKOUT_SESSION_ID}` — the session id lets the success
 page verify the purchase server-side rather than trusting the query string alone.
+
+## `POST /api/billing/portal`
+
+Creates a Stripe **billing portal** session so a subscriber can update their payment
+method or cancel a subscription without emailing support. Session only.
+
+```bash
+curl -X POST "https://openagents-nu.vercel.app/api/billing/portal" -H "Cookie: <session cookie>"
+```
+
+```ts
+// 200 OK
+{ url: string } // redirect the buyer here
+
+// 401 Unauthorized — no session
+// 400 Bad Request — the caller has no Stripe Customer yet (never subscribed to anything)
+// 503 Service Unavailable — payments not enabled on this deployment
+```
+
+[`/purchases`](/purchases) shows each subscription's renewal or end date next to a
+**Manage** button that calls this route.
 
 ## `POST /api/webhooks/stripe`
 
 Stripe webhook receiver, verified against `STRIPE_WEBHOOK_SECRET`. Called by Stripe,
 not by clients directly. Handles:
 
-- `checkout.session.completed` — records the purchase and triggers the Connect
-  transfer (minus the platform fee; see [Publishing](/docs/publishing)).
+- `checkout.session.completed` — records the purchase (one-time or the first period
+  of a subscription) and triggers the Connect transfer (minus the platform fee; see
+  [Publishing](/docs/publishing)).
 - `checkout.session.async_payment_succeeded` / `checkout.session.async_payment_failed`
   — delayed-payment methods that don't settle synchronously with Checkout.
 - `charge.refunded` — revokes access for the refunded purchase.
 - `charge.dispute.created` / `charge.dispute.closed` — flags/unflags a purchase under
   dispute.
+- `invoice.paid` — a subscription renewed: rolls the matching purchase's `expiresAt`
+  forward to the new period end and (via `src/lib/notify.ts`) sends the buyer a
+  receipt for the renewal.
+- `invoice.payment_failed` — a renewal charge failed; the subscription and its
+  `purchases` row are left alone (access doesn't drop until Stripe actually cancels
+  the subscription after retries are exhausted — see the next event).
+- `customer.subscription.updated` — plan or status changes (e.g. `past_due`,
+  `cancel_at_period_end` toggled from the billing portal) mirrored onto the
+  `purchases` row.
+- `customer.subscription.deleted` — the subscription actually ended (canceled, or
+  retries exhausted): access is revoked at that point rather than at the failed
+  charge above, so a card that recovers mid-retry never causes a spurious lockout.
 - The three Stripe Accounts v2 events for a connected seller's recipient
   configuration (capability status, configuration, and requirements updates) — flips
   `users.stripeOnboarded` via `getConnectedAccountStatus`.
@@ -680,6 +1007,14 @@ curl -X POST "https://openagents-nu.vercel.app/api/v1/publish" \
 free text (or omit it and put the same content in the first section of
 `CHANGELOG.md` among `files` — see [Publishing](/docs/publishing)).
 
+Each entry in `files` may also carry `encoding` (`"utf8"` — the default, `content`
+is the text — or `"base64"` for a binary file, where `content` is base64) and `mode`
+(the POSIX file mode as an integer, `420`/`0o644` or `493`/`0o755`; omitted means
+`420`) — see [Package Format](/docs/package-format#binary-files) for the full binary-file
+rules (size caps, which extensions are treated as binary automatically) and
+[CLI Reference](/docs/cli) for how `openagents publish` packs and detects these
+without you setting them by hand.
+
 ```ts
 // 201 Created
 { id: "me/my-package", version: "1.0.0", url: "/p/me/my-package", status: "live" | "pending" }
@@ -698,10 +1033,11 @@ every update from an already-trusted publisher.
 
 `400` covers: manifest validation errors (same checks as `openagents validate`), the
 manifest's `owner` not matching the authenticated user's handle,
-`pricing.model: subscription` (not accepted — see [Package Format](/docs/package-format)),
-`pricing.currency` not a 3-letter code, the new `version` not strictly greater than the
-package's current published version, and file limits — at most 200 files, 512 KB per
-file, 2 MB total, no binary files.
+`pricing.model: subscription` without a `pricing.interval` of `month` or `year` (see
+[Package Format](/docs/package-format)), `pricing.currency` not a 3-letter code, the
+new `version` not strictly greater than the package's current published version, and
+file limits — at most 200 files, 512 KB per file, 2 MB total **text**, plus at most
+2 MB total across all **binary** files (see [Package Format](/docs/package-format#binary-files)).
 
 ```ts
 // 401 Unauthorized — no session or token
@@ -780,16 +1116,36 @@ returns a plain, non-JSON response.
 
 ## Rate limits
 
-Rate limiting is in-memory and per-serverless-instance (best-effort — see
-`src/lib/ratelimit.ts`), not a hard, globally-exact guarantee. A `429` response always
-carries a `Retry-After` header (seconds).
+Rate limits are now **durable**: counters live in Postgres (the `rate_limits` table,
+a fixed window per `"<route>:<client>"` key) so a limit holds across every
+serverless instance, not just the one that happened to handle a given request — a
+deployment without `DATABASE_URL` configured falls back to the same in-memory,
+per-instance limiter as before (best-effort, resets on cold start). A `429` response
+always carries a `Retry-After` header (seconds).
 
 | Route | Limit |
 |---|---|
 | `.../download`, `.../versions/{version}/download` | 60 requests/minute/IP |
 | `.../files/{path}` | 120 requests/minute/IP |
 | `.../star` (POST) | 30 requests/minute/IP |
-| `.../report` | Anonymous-friendly but tight — see `src/lib/ratelimit.ts` for the exact number once this route lands; it exists specifically to blunt spam against an unauthenticated endpoint. |
+| `.../report` | 3/hour anonymous, 10/hour signed-in — anonymous reporting stays open (see [Publishing](/docs/publishing#content-policy)), just tightly capped, since it's the one unauthenticated write route most exposed to spam. |
+| `POST /api/v1/tokens` | 10 requests/minute |
+| `POST /api/v1/publish`, `POST /api/v1/publish/import`, `.../source/sync` | 10 requests/minute |
+| `POST /api/checkout` | 10 requests/minute |
+
+## Content-Security-Policy
+
+`next.config.ts` now sends an **enforcing** `Content-Security-Policy` header (not
+`-Report-Only`) with a fresh, per-request nonce: `script-src 'self' 'nonce-<value>'
+'strict-dynamic' https://js.stripe.com`, `frame-src https://js.stripe.com`, `img-src
+'self' data: https://avatars.githubusercontent.com https://lh3.googleusercontent.com
+https://*.stripe.com`, `connect-src 'self' https://api.stripe.com
+https://*.sentry.io`. Every server-rendered `<script>` tag (including Next's own
+hydration bootstrap) carries the request's nonce, and creator-supplied READMEs
+render through `react-markdown` with raw HTML disabled — see
+[Self-Hosting](/docs/self-hosting#content-security-policy) for the full policy string
+and self-hosting implications (a self-hosted deployment adding its own inline
+scripts needs to either nonce them or adjust the policy).
 
 ## OpenAPI
 

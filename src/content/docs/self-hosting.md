@@ -40,6 +40,12 @@ cp .env.example .env.local
 
 When set, the catalog abstraction (`src/lib/catalog/index.ts`) merges DB-backed
 packages with the bundled seed catalog; when unset, only the seed catalog is served.
+In DB mode, the list/tags/facets responses (`GET /api/v1/packages`,
+`GET /api/v1/tags`, and the `?facets=1` breakdown) are cached in memory for 60
+seconds per serverless instance — a burst of identical requests hitting the same
+warm instance shares one query instead of re-hitting Postgres each time; a fresh
+publish/star/report can take up to that long to show up in a listing on an instance
+that already has a cached copy.
 
 #### Schema migrations
 
@@ -49,32 +55,43 @@ into `drizzle/` — commit that directory, don't `.gitignore` it away in a fork.
 | Command | When |
 |---|---|
 | `npm run db:generate` | After every schema edit. Diffs `src/lib/db/schema.ts` against the last migration snapshot and writes a new file under `drizzle/` (or nothing, if there's no drift). Runs entirely offline — no `DATABASE_URL` needed. |
-| `npm run db:migrate` | Applies any not-yet-applied migrations in `drizzle/` to `DATABASE_URL`. *(Not present in `package.json` today — see the note below.)* |
-| `npm run db:push` | Pushes the current schema straight to `DATABASE_URL`, skipping the migrations folder entirely. |
+| `npm run db:migrate` | The recommended path now. Applies any not-yet-applied migrations in `drizzle/` to `DATABASE_URL` — see **Baselining** below for what it does the first time it runs against a database that was set up with `db:push`. |
+| `npm run db:push` | Pushes the current schema straight to `DATABASE_URL`, skipping the migrations folder entirely. Still works, but `db:migrate` is now the recommended path — see below. |
 | `npm run db:studio` | Opens Drizzle Studio against `DATABASE_URL` to browse data. |
 
-**The hosted deploy still uses `db:push` today**, not a `db:generate`/`db:migrate`
-pipeline — `drizzle/` exists so migrations *can* be reviewed and applied
-deliberately, but nothing currently runs `db:migrate` in CI or at deploy time. To
-switch a deployment over:
+**`db:migrate` is now the recommended way to apply schema changes**, including on
+the hosted deployment — run it as a release step (a Vercel deploy hook, or by hand)
+after pulling schema changes, instead of `db:push`.
+
+#### Baselining a `db:push`-created database
+
+Every database that predates this change was set up with `db:push`, which doesn't
+record anything in Drizzle's migrations-applied table — so the very first time
+`db:migrate` runs against one of those databases, it **baselines** it automatically:
+it detects that the schema already matches (or is a subset of) an existing
+migration and marks that migration (and everything before it) as already applied,
+without re-running any SQL against tables that already exist. From that point on,
+`db:migrate` behaves normally — only genuinely new migrations run. A brand-new,
+empty database has nothing to baseline; `db:migrate` just applies every migration
+from `drizzle/0000_*.sql` forward, including `drizzle/0001_*` (the batch-3 delta:
+new tables for durable rate limits, collections, and GitHub package sources, plus a
+Postgres full-text-search `GIN` index used by catalog search).
 
 1. Make sure `drizzle/` is up to date: `npm run db:generate` should print
    "No schema changes, nothing to migrate" against the schema you're running (CI
    checks this on every push — see `.github/workflows/ci.yml`).
-2. Add a `db:migrate` script that runs Drizzle's migrator against `DATABASE_URL`
-   (`drizzle-orm/neon-http/migrator`'s `migrate()`, pointed at `./drizzle`) — see
-   Drizzle's [migrations guide](https://orm.drizzle.team/docs/migrations) for the
-   Neon HTTP driver specifically, since this project's `getDb()` uses
-   `@neondatabase/serverless` over HTTP, not a pooled TCP connection.
-3. Run that script as a release step (a Vercel deploy hook, or manually) instead of
-   `db:push` going forward. Until then, `db:push` remains correct to run after
-   pulling schema changes — it's just not reviewable/rollback-able the way applying
-   `drizzle/*.sql` one file at a time is.
+2. Run `npm run db:migrate`. Against an existing `db:push`-managed database, this
+   baselines it (see above) and applies anything genuinely new; against a fresh
+   database, it applies every migration from scratch. Either way the end state
+   matches what `db:push` would have produced.
+3. From here on, run `db:migrate` after every schema change instead of `db:push` —
+   it's the reviewable, one-file-at-a-time path `drizzle/` was always meant to
+   support, now that a `db:push`-created database can adopt it without a manual
+   reconciliation step.
 
-The very first migration (`drizzle/0000_*.sql`) was generated from the schema as of
-this doc's writing and covers every table that exists today; a fresh database can
-either run it via `db:migrate` (once wired up) or just use `db:push`, which produces
-the same end state.
+`db:push` remains available and still works the same way it always has — useful for
+quick local iteration before you've settled on a schema shape — but a deployment
+that matters (anything with real data) should be on `db:migrate`.
 
 ### Auth.js (GitHub and/or Google OAuth) — enables sign-in, publishing, stars
 
@@ -144,6 +161,27 @@ details.
 Without either an admin handle or a database row with `isAdmin: true`, `/admin` and
 the admin API are simply inaccessible — there's no default admin account.
 
+### Email notifications
+
+| Variable | Description |
+|---|---|
+| `RESEND_API_KEY` | API key for [Resend](https://resend.com), used to send transactional email. Without it, `src/lib/email.ts` is a no-op — every call site in `src/lib/notify.ts` still runs, it just doesn't send anything, so the app behaves identically to today with this unset. |
+| `EMAIL_FROM` | The `From` address used for every email this deployment sends, e.g. `OpenAgents <notifications@yourdomain.com>`. Required alongside `RESEND_API_KEY` for email to actually go out (a missing `EMAIL_FROM` with a key set logs a warning and no-ops, the same as having no key at all). |
+| `ADMIN_EMAIL` | Where report notifications are sent. Optional even with the other two set — without it, purchase receipts and sale/status notices to individual users still send; only the admin-facing report email is skipped. |
+
+When configured, notifications go out at the moments in `src/lib/notify.ts`: a
+purchase receipt to the buyer, a sale notice to the seller, a report notice to
+`ADMIN_EMAIL`, and a status-change notice (approved, unlisted, deprecated) to a
+package's owner. Every notification is fire-and-forget — a delivery failure is
+logged, never surfaced to the user or allowed to fail the action that triggered it
+(a purchase still completes even if the receipt email fails to send).
+
+### GitHub auto-sync
+
+| Variable | Description |
+|---|---|
+| `SOURCE_WEBHOOK_KEY` | Signing key used to verify inbound GitHub webhook requests for [linked package sources](/docs/publishing#github-auto-sync) (`POST /api/webhooks/github/{id}`). Optional — falls back to `AUTH_SECRET` when unset, so a deployment that already has auth configured needs nothing extra here; set it separately only if you want webhook verification on a distinct key from session signing. |
+
 ### Analytics
 
 | Variable | Description |
@@ -171,16 +209,29 @@ call sites don't need to change.
 
 ### Content-Security-Policy
 
-`next.config.ts` sends a `Content-Security-Policy-Report-Only` header on every
-response — **report-only, not enforcing**. It's not yet safe to enforce because (1)
-this version of Next.js emits inline bootstrap/hydration `<script>` tags with no
-nonce, so an enforcing `script-src` would break every page without a nonce-wiring
-change, and (2) creator-supplied READMEs are rendered through `react-markdown` and
-haven't yet been audited for injected `<script>`/`on*=` content. See the comment
-above the `headers()` function in `next.config.ts` for the exact plan to flip it to
-enforcing. Point your browser's devtools console at a deployment to see any
-violations it would currently cause — none should block rendering, since nothing is
-blocked yet.
+`next.config.ts` now sends an **enforcing** `Content-Security-Policy` header (no
+longer `-Report-Only`), with a fresh nonce generated per request:
+
+```
+script-src 'self' 'nonce-<per-request>' 'strict-dynamic' https://js.stripe.com;
+frame-src https://js.stripe.com;
+img-src 'self' data: https://avatars.githubusercontent.com https://lh3.googleusercontent.com https://*.stripe.com;
+connect-src 'self' https://api.stripe.com https://*.sentry.io;
+```
+
+(plus the standard `default-src 'self'`, `object-src 'none'`, `base-uri 'self'`
+directives — see `next.config.ts`'s `headers()` function for the exact policy
+string). Enforcing this required two things that are now in place: every
+server-rendered `<script>` tag (including Next's own hydration bootstrap) is nonced
+via middleware, and creator-supplied READMEs render through `react-markdown` with
+raw HTML disabled, so injected `<script>`/`on*=` content in a README can't execute
+regardless of the header.
+
+If you fork this project and add your own inline `<script>` tags (a custom
+analytics snippet, say), either thread the request's nonce onto them the same way
+`next.config.ts` does for its own, or relax `script-src` for your deployment —
+an un-nonced inline script is silently blocked under the shipped policy, not a
+build error, so check your browser's devtools console after adding one.
 
 ### Site
 
@@ -211,6 +262,8 @@ layering on database/auth/payments.
 | Sign-in, stars, creator profiles | + `AUTH_SECRET`, and `AUTH_GITHUB_ID`/`AUTH_GITHUB_SECRET` and/or `AUTH_GOOGLE_ID`/`AUTH_GOOGLE_SECRET` |
 | Paid packages, Stripe Connect payouts | + `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` |
 | A moderation queue and admin approval before new packages go live | + `ADMIN_HANDLES` and/or an `isAdmin` row, `REQUIRE_REVIEW` |
+| Purchase/sale/report/status emails | + `RESEND_API_KEY`, `EMAIL_FROM`, and optionally `ADMIN_EMAIL` |
+| Auto-republish on a linked GitHub repo's release/tag | nothing extra — `SOURCE_WEBHOOK_KEY` is optional, falls back to `AUTH_SECRET` |
 | Errors also forwarded to Sentry (not just stderr) | + `SENTRY_DSN` |
 
 Each tier is additive — nothing above it is required to run the tier below it, and

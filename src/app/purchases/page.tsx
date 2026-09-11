@@ -11,6 +11,8 @@ import { PurchaseStatusBadge } from "@/components/PurchaseStatusBadge";
 import { CopyButton } from "@/components/CopyButton";
 import { installCommand } from "@/lib/runtimes";
 import { cliSpec } from "@/lib/site";
+import { isPurchaseActive } from "@/lib/purchases";
+import { ManageSubscriptionButton } from "@/components/ManageSubscriptionButton";
 
 export const metadata: Metadata = {
   title: "Purchases",
@@ -68,6 +70,8 @@ async function PurchasesTable({
       status: purchases.status,
       receiptUrl: purchases.receiptUrl,
       createdAt: purchases.createdAt,
+      stripeSubscriptionId: purchases.stripeSubscriptionId,
+      expiresAt: purchases.expiresAt,
     })
     .from(purchases)
     .innerJoin(packages, eq(purchases.packageId, packages.id))
@@ -108,6 +112,13 @@ async function PurchasesTable({
         <tbody>
           {rows.map((row, i) => {
             const reinstall = installCommand(row.owner, row.name, undefined, cliSpec());
+            const isSubscription = Boolean(row.stripeSubscriptionId);
+            // A subscription can sit `paid` with a past `expiresAt` for a while — a
+            // renewal invoice failed, but Stripe hasn't given up and fired
+            // `customer.subscription.deleted` yet — so access (and what this row can
+            // offer: reinstall, download, receipt) follows `isPurchaseActive`, not the
+            // raw status the badge below shows.
+            const active = isPurchaseActive({ status: row.status, expiresAt: row.expiresAt });
             return (
               <tr key={i} className="border-b border-border last:border-0">
                 <td className="px-4 py-2">
@@ -121,13 +132,20 @@ async function PurchasesTable({
                     <span className="text-fg-subtle">{row.title}</span>
                     <span className="font-mono text-xs text-fg-subtle">v{row.latestVersion}</span>
                   </div>
-                  {row.status === "paid" && (
+                  {active && (
                     <div className="mt-1.5 flex items-center gap-1.5">
                       <code className="overflow-x-auto whitespace-pre rounded bg-bg-elevated px-2 py-1 font-mono text-xs text-fg-muted">
                         {reinstall}
                       </code>
                       <CopyButton value={reinstall} label="Reinstall" />
                     </div>
+                  )}
+                  {isSubscription && row.expiresAt && (
+                    <p className="mt-1.5 text-xs text-fg-subtle">
+                      {active
+                        ? `Renews on ${row.expiresAt.toLocaleDateString()}`
+                        : `Ended on ${row.expiresAt.toLocaleDateString()}`}
+                    </p>
                   )}
                 </td>
                 <td className="px-4 py-2 text-fg-muted">
@@ -140,28 +158,31 @@ async function PurchasesTable({
                   <PurchaseStatusBadge status={row.status} />
                 </td>
                 <td className="px-4 py-2 text-right">
-                  {row.status === "paid" ? (
-                    <div className="flex flex-col items-end gap-1">
-                      <a
-                        href={`/api/v1/packages/${row.owner}/${row.name}/download`}
-                        className="font-medium text-accent hover:text-accent-hover"
-                      >
-                        Download
-                      </a>
-                      {row.receiptUrl && (
+                  <div className="flex flex-col items-end gap-1">
+                    {active ? (
+                      <>
                         <a
-                          href={row.receiptUrl}
-                          target="_blank"
-                          rel="noreferrer noopener"
-                          className="text-xs text-fg-subtle hover:text-fg"
+                          href={`/api/v1/packages/${row.owner}/${row.name}/download`}
+                          className="font-medium text-accent hover:text-accent-hover"
                         >
-                          Receipt
+                          Download
                         </a>
-                      )}
-                    </div>
-                  ) : (
-                    <span className="text-fg-subtle">—</span>
-                  )}
+                        {row.receiptUrl && (
+                          <a
+                            href={row.receiptUrl}
+                            target="_blank"
+                            rel="noreferrer noopener"
+                            className="text-xs text-fg-subtle hover:text-fg"
+                          >
+                            Receipt
+                          </a>
+                        )}
+                      </>
+                    ) : (
+                      !isSubscription && <span className="text-fg-subtle">—</span>
+                    )}
+                    {isSubscription && <ManageSubscriptionButton />}
+                  </div>
                 </td>
               </tr>
             );

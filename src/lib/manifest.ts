@@ -27,6 +27,8 @@ const rawPricingSchema = z
     model: z.enum(PRICING_MODELS).default("free"),
     amount_cents: z.number().int().min(0).default(0),
     currency: z.string().min(1).default("usd"),
+    /** Billing period for `subscription` pricing; ignored otherwise. */
+    interval: z.enum(["month", "year"]).optional(),
   })
   .default(DEFAULT_PRICING)
   .refine((p) => p.model === "free" || p.amount_cents > 0, {
@@ -81,6 +83,7 @@ export const manifestSchema = rawManifestSchema.transform(
     pricing: {
       model: m.pricing.model,
       amountCents: m.pricing.amount_cents,
+      interval: m.pricing.interval,
       currency: m.pricing.currency,
     },
     entry: m.entry,

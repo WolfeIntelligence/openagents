@@ -14,6 +14,7 @@
 import { pack } from "tar-stream";
 import { gzipSync } from "node:zlib";
 import { createHash } from "node:crypto";
+import { decodeContent } from "@/lib/files";
 import type { Package, PackageFile } from "@/lib/types";
 
 /** Fetches one file's content by package-relative path. Mirrors `Catalog["getFile"]` curried on owner/name. */
@@ -24,6 +25,10 @@ export type GetFileFn = (path: string) => Promise<PackageFile | null>;
  *  default (`new Date()` per entry) would make the gzip — and therefore its
  *  sha256 — different on every build even for byte-identical file content. */
 const FIXED_MTIME = new Date(0);
+
+/** Mode written for a file whose `PackageFile.mode` is unset — a plain,
+ *  non-executable file. */
+const DEFAULT_FILE_MODE = 0o644;
 
 export interface TarballWithDigest {
   buffer: Buffer;
@@ -52,11 +57,13 @@ export async function packageTarballWithDigest(pkg: Package, getFile: GetFileFn)
   // Load every file first, then write all tar entries while a consumer is
   // already attached. Awaiting each entry before anything reads the stream
   // deadlocks as soon as the package exceeds the stream's internal buffer.
-  const files: { relPath: string; buf: Buffer }[] = [];
+  const files: { relPath: string; buf: Buffer; mode: number }[] = [];
   for (const relPath of relativePaths) {
     const file = await getFile(relPath);
     if (!file || file.content === undefined) continue; // not found / not allowed — skip
-    files.push({ relPath, buf: Buffer.from(file.content, "utf-8") });
+    // decodeContent honors file.encoding, so a binary file's base64 content
+    // round-trips into the tarball as the original bytes, not the base64 text.
+    files.push({ relPath, buf: decodeContent(file), mode: file.mode ?? DEFAULT_FILE_MODE });
   }
 
   const tarPack = pack();
@@ -67,8 +74,8 @@ export async function packageTarballWithDigest(pkg: Package, getFile: GetFileFn)
     tarPack.on("error", reject);
   });
 
-  for (const { relPath, buf } of files) {
-    tarPack.entry({ name: `${prefix}/${relPath}`, size: buf.length, mtime: FIXED_MTIME }, buf);
+  for (const { relPath, buf, mode } of files) {
+    tarPack.entry({ name: `${prefix}/${relPath}`, size: buf.length, mtime: FIXED_MTIME, mode }, buf);
   }
   tarPack.finalize();
 

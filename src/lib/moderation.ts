@@ -13,6 +13,7 @@ import { getDb } from "@/lib/db/client";
 import { packages, packageStats, purchases, reports, stars } from "@/lib/db/schema";
 import { NAME_RE } from "@/lib/manifest";
 import type { PackageStatus } from "@/lib/types";
+import { invalidateCatalogCache } from "@/lib/catalog/cache";
 
 /** Thrown for any moderation failure; `status` is the HTTP status the route should return. */
 export class PackageActionError extends Error {
@@ -216,6 +217,7 @@ export async function setPackageStatus(args: SetPackageStatusArgs): Promise<SetP
     })
     .where(eq(packages.id, row.id));
 
+  invalidateCatalogCache();
   return { id: `${owner}/${name}`, status: target };
 }
 
@@ -234,6 +236,7 @@ export async function setPackageFeatured(
     .set({ featured, updatedAt: new Date() })
     .where(eq(packages.id, row.id));
 
+  invalidateCatalogCache();
   return { id: `${owner}/${name}`, featured };
 }
 
@@ -266,6 +269,7 @@ export async function deletePackage(owner: string, name: string): Promise<{ id: 
     .where(and(eq(packageStats.owner, owner), eq(packageStats.name, name)));
   await db.delete(stars).where(and(eq(stars.owner, owner), eq(stars.name, name)));
 
+  invalidateCatalogCache();
   return { id: `${owner}/${name}`, deleted: true };
 }
 

@@ -15,7 +15,6 @@ import { Markdown } from "@/components/Markdown";
 import { StarButton } from "@/components/StarButton";
 import { isStarred } from "@/lib/stats";
 import { isDbEnabled } from "@/lib/db/client";
-import { formatPrice } from "@/lib/format";
 import { getRequester } from "@/lib/requester";
 import { isAdmin } from "@/lib/admin";
 import { packageHasPurchases } from "@/lib/moderation";
@@ -27,7 +26,12 @@ import { ReviewsTab } from "@/components/ReviewsTab";
 import { RatingStars } from "@/components/RatingStars";
 import { StatsPanel } from "@/components/StatsPanel";
 import { RelatedPackages } from "@/components/RelatedPackages";
-import { cliSpec } from "@/lib/site";
+import { absoluteUrl, cliSpec } from "@/lib/site";
+import { JsonLd } from "@/components/JsonLd";
+import { buildSoftwareSourceCodeLd } from "@/lib/seo";
+import { formatPricing } from "@/lib/format";
+import { getActivePurchase } from "@/lib/purchases";
+import { AddToCollection } from "@/components/AddToCollection";
 
 type Params = { owner: string; name: string };
 type TabId = "readme" | "files" | "manifest" | "versions" | "reviews";
@@ -55,9 +59,36 @@ export async function generateMetadata({
   const { owner, name } = await params;
   const pkg = await loadPackage(owner, name);
   if (!pkg) return { title: "Package not found" };
+
+  const url = absoluteUrl(`/p/${owner}/${name}`);
+  // Pending/unlisted packages render for their owner/an admin (see the
+  // visibility gate in the page component below) but should never show up in
+  // search results if a crawler somehow reaches the URL directly.
+  const isHidden = pkg.status === "pending" || pkg.status === "unlisted";
+
   return {
     title: pkg.manifest.title,
     description: pkg.manifest.summary,
+    alternates: {
+      canonical: url,
+      // The site's RSS feed isn't linked from the shared layout (out of scope
+      // here — see "Needs change elsewhere" in the workstream report), so
+      // surface it from every package page's own metadata instead.
+      types: { "application/rss+xml": absoluteUrl("/feed.xml") },
+    },
+    openGraph: {
+      title: pkg.manifest.title,
+      description: pkg.manifest.summary,
+      url,
+      type: "website",
+      images: [{ url: absoluteUrl(`/p/${owner}/${name}/opengraph-image`), width: 1200, height: 630 }],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: pkg.manifest.title,
+      description: pkg.manifest.summary,
+    },
+    ...(isHidden ? { robots: { index: false } } : {}),
   };
 }
 
@@ -103,8 +134,18 @@ export default async function PackagePage({
   const starsEnabled = isDbEnabled();
   const starred = session?.user?.id ? await isStarred(session.user.id, owner, name) : false;
 
+  const jsonLd = buildSoftwareSourceCodeLd({ pkg, creator });
+  // Feeds only the BuyButton branch below ("Subscribed — renews on <date>" vs. "You
+  // own this package.") — null whenever there's nothing to show one (not owned, no
+  // session, or a one-time purchase, which has no renewal date to report).
+  const activePurchase =
+    owns && !isOwner && session?.user?.id
+      ? await getActivePurchase(session.user.id, owner, name)
+      : null;
+
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+      <JsonLd data={jsonLd} />
       {/* Header */}
       <div className="border-b border-border pb-6">
         <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -186,6 +227,12 @@ export default async function PackagePage({
                 signedIn={Boolean(session?.user?.id)}
                 enabled={starsEnabled}
               />
+              <AddToCollection
+                owner={owner}
+                name={name}
+                signedIn={Boolean(session?.user?.id)}
+                enabled={starsEnabled}
+              />
               {isFree ? (
                 <a
                   href={`/api/v1/packages/${owner}/${name}/download`}
@@ -201,13 +248,19 @@ export default async function PackagePage({
                   >
                     Download .tgz
                   </a>
-                  {!isOwner && <span className="text-xs text-fg-subtle">You own this package.</span>}
+                  {!isOwner && (
+                    <span className="text-xs text-fg-subtle">
+                      {activePurchase?.kind === "subscription" && activePurchase.expiresAt
+                        ? `Subscribed — renews on ${activePurchase.expiresAt.toLocaleDateString()}`
+                        : "You own this package."}
+                    </span>
+                  )}
                 </>
               ) : (
                 <BuyButton
                   owner={owner}
                   name={name}
-                  label={`Buy — ${formatPrice(manifest.pricing.amountCents, manifest.pricing.currency)}`}
+                  label={`${manifest.pricing.model === "subscription" ? "Subscribe" : "Buy"} — ${formatPricing(manifest.pricing)}`}
                 />
               )}
             </div>

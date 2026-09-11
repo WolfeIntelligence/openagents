@@ -63,6 +63,9 @@ export function validateManifest(m) {
     req(PRICING_MODELS.includes(m.pricing.model), `pricing.model: must be one of ${PRICING_MODELS.join(", ")}`);
     req(Number.isInteger(m.pricing.amount_cents) && m.pricing.amount_cents >= 0, "pricing.amount_cents: must be a non-negative integer");
     req(typeof m.pricing.currency === "string" && m.pricing.currency.length > 0, "pricing.currency: required, e.g. \"usd\"");
+    if (m.pricing.interval !== undefined) {
+      req(["month", "year"].includes(m.pricing.interval), 'pricing.interval: must be "month" or "year"');
+    }
     if (m.pricing.model && m.pricing.model !== "free" && m.pricing.amount_cents === 0) {
       issues.push('pricing.amount_cents: must be > 0 when pricing.model is not "free"');
     }

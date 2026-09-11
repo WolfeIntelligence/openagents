@@ -7,6 +7,7 @@ import { resolveAccess } from "@/lib/access";
 import { CodeBlock } from "@/components/CodeBlock";
 import { Markdown } from "@/components/Markdown";
 import { resolveLanguage } from "@/lib/highlight";
+import { contentTypeFor, isImageContentType } from "@/lib/files";
 
 type Params = { owner: string; name: string; path: string[] };
 type FileSearchParams = { view?: string };
@@ -63,6 +64,13 @@ export default async function FileViewerPage({
   const isMarkdown = filePath.toLowerCase().endsWith(".md");
   const rendered = isMarkdown && view === "rendered";
 
+  // Y3: a binary file (encoding "base64") has no useful source view — an
+  // image renders inline, anything else (pdf, archive, ...) gets a plain
+  // "download this" panel instead of dumping base64 text at the reader.
+  const isBinary = file.encoding === "base64";
+  const isImage = isImageContentType(contentTypeFor(filePath));
+  const rawUrl = `/api/v1/packages/${owner}/${name}/files/${filePath}`;
+
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
       <nav aria-label="Breadcrumb" className="mb-4 flex flex-wrap items-center gap-1 text-sm">
@@ -106,7 +114,7 @@ export default async function FileViewerPage({
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <p className="text-xs text-fg-subtle">{formatBytes(file.size)}</p>
-              {isMarkdown && (
+              {isMarkdown && !isBinary && (
                 // G-C4: server-rendered toggle, no client JS required — a
                 // plain link to the same page with `?view=` swapped.
                 <div className="flex items-center rounded-md border border-border p-0.5 text-xs">
@@ -132,7 +140,7 @@ export default async function FileViewerPage({
               )}
             </div>
             <a
-              href={`/api/v1/packages/${owner}/${name}/files/${filePath}`}
+              href={rawUrl}
               target="_blank"
               rel="noreferrer"
               className="rounded-md border border-border px-3 py-1.5 text-sm text-fg hover:border-border-strong"
@@ -141,7 +149,28 @@ export default async function FileViewerPage({
             </a>
           </div>
 
-          {rendered ? (
+          {isBinary ? (
+            isImage ? (
+              <div className="flex flex-col items-center gap-3 rounded-lg border border-border bg-bg-elevated p-6">
+                {/* eslint-disable-next-line @next/next/no-img-element -- arbitrary package-hosted image, not a Next-optimizable static asset */}
+                <img
+                  src={rawUrl}
+                  alt={filePath}
+                  className="max-h-[32rem] max-w-full rounded-md border border-border"
+                />
+              </div>
+            ) : (
+              <div className="flex flex-col items-center gap-3 rounded-lg border border-border bg-surface px-6 py-16 text-center">
+                <p className="text-sm text-fg-muted">Binary file ({formatBytes(file.size)})</p>
+                <a
+                  href={rawUrl}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm font-medium text-fg hover:border-border-strong"
+                >
+                  Download
+                </a>
+              </div>
+            )
+          ) : rendered ? (
             <div className="rounded-lg border border-border bg-bg-elevated p-6">
               <Markdown content={file.content} owner={owner} name={name} />
             </div>
