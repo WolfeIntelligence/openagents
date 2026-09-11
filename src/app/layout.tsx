@@ -23,7 +23,7 @@ export const metadata: Metadata = {
   description:
     "Find, install, and publish agentic workflows, harnesses, rules, and skills for Claude Code, Cursor, Codex, and more.",
   metadataBase: new URL(siteUrl()),
-  alternates: { canonical: "./" },
+  alternates: { canonical: "./", types: { "application/rss+xml": "/feed.xml" } },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
