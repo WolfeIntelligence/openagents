@@ -13,6 +13,8 @@ import { netRevenueCents } from "@/lib/stripe";
 import { formatPrice } from "@/lib/format";
 import { Sparkline } from "@/components/Sparkline";
 import { PackageStatusPill } from "./PackageStatusPill";
+import { BadgeSnippet } from "@/components/BadgeSnippet";
+import { siteUrl } from "@/lib/site";
 
 export const metadata: Metadata = {
   title: "Dashboard",
@@ -70,6 +72,7 @@ export default async function DashboardPage({
     includeHidden: true,
     limit: CATALOG_ALL_LIMIT,
   });
+  const site = siteUrl();
 
   if (items.length === 0) {
     return (
@@ -207,6 +210,22 @@ export default async function DashboardPage({
         <div className="mt-4 grid grid-cols-1 gap-6 sm:grid-cols-2">
           <BreakdownTable title="By version" rows={byVersion} />
           <BreakdownTable title="By runtime" rows={byRuntime} />
+        </div>
+      </div>
+
+      <div className="mt-10">
+        <h2 className="text-lg font-semibold text-fg">Badges</h2>
+        <p className="mt-1 max-w-2xl text-sm text-fg-muted">
+          README-ready markdown for each package&apos;s version, downloads, stars, and rating —
+          paste directly, no editing needed.
+        </p>
+        <div className="mt-4 flex flex-col gap-6">
+          {items.map((item) => (
+            <div key={item.id}>
+              <p className="mb-2 font-mono text-sm text-fg">{item.id}</p>
+              <BadgeSnippet owner={item.owner} name={item.name} siteUrl={site} />
+            </div>
+          ))}
         </div>
       </div>
     </Shell>

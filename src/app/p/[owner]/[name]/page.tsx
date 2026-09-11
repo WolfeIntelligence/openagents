@@ -27,7 +27,9 @@ import { ReviewsTab } from "@/components/ReviewsTab";
 import { RatingStars } from "@/components/RatingStars";
 import { StatsPanel } from "@/components/StatsPanel";
 import { RelatedPackages } from "@/components/RelatedPackages";
-import { cliSpec } from "@/lib/site";
+import { absoluteUrl, cliSpec } from "@/lib/site";
+import { JsonLd } from "@/components/JsonLd";
+import { buildSoftwareSourceCodeLd } from "@/lib/seo";
 
 type Params = { owner: string; name: string };
 type TabId = "readme" | "files" | "manifest" | "versions" | "reviews";
@@ -55,9 +57,36 @@ export async function generateMetadata({
   const { owner, name } = await params;
   const pkg = await loadPackage(owner, name);
   if (!pkg) return { title: "Package not found" };
+
+  const url = absoluteUrl(`/p/${owner}/${name}`);
+  // Pending/unlisted packages render for their owner/an admin (see the
+  // visibility gate in the page component below) but should never show up in
+  // search results if a crawler somehow reaches the URL directly.
+  const isHidden = pkg.status === "pending" || pkg.status === "unlisted";
+
   return {
     title: pkg.manifest.title,
     description: pkg.manifest.summary,
+    alternates: {
+      canonical: url,
+      // The site's RSS feed isn't linked from the shared layout (out of scope
+      // here — see "Needs change elsewhere" in the workstream report), so
+      // surface it from every package page's own metadata instead.
+      types: { "application/rss+xml": absoluteUrl("/feed.xml") },
+    },
+    openGraph: {
+      title: pkg.manifest.title,
+      description: pkg.manifest.summary,
+      url,
+      type: "website",
+      images: [{ url: absoluteUrl(`/p/${owner}/${name}/opengraph-image`), width: 1200, height: 630 }],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: pkg.manifest.title,
+      description: pkg.manifest.summary,
+    },
+    ...(isHidden ? { robots: { index: false } } : {}),
   };
 }
 
@@ -103,8 +132,11 @@ export default async function PackagePage({
   const starsEnabled = isDbEnabled();
   const starred = session?.user?.id ? await isStarred(session.user.id, owner, name) : false;
 
+  const jsonLd = buildSoftwareSourceCodeLd({ pkg, creator });
+
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+      <JsonLd data={jsonLd} />
       {/* Header */}
       <div className="border-b border-border pb-6">
         <div className="flex flex-wrap items-center gap-2 text-sm">
