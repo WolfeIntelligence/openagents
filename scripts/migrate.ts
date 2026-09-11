@@ -84,7 +84,10 @@ async function main() {
         "— this looks like a `db:push`-created database. Baselining existing " +
         "migrations as applied before continuing (see scripts/db-baseline.ts)."
     );
-    const { baselined } = await runBaseline(sql);
+    // Only the initial migration (the full schema as of the first `drizzle-kit
+    // generate`) is recorded as applied: a db:push-created database is known to
+    // match that one, while anything generated later must actually run.
+    const { baselined } = await runBaseline(sql, undefined, { onlyInitial: true });
     console.log(`Baselined ${baselined} migration(s) as already applied.`);
   }
 

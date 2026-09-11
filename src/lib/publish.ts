@@ -9,6 +9,7 @@ import { ManifestError, parseManifest, validateManifestFiles } from "@/lib/manif
 import { isGreater, SemverError } from "@/lib/semver";
 import { isReservedHandle } from "@/lib/reserved";
 import { MAX_BINARY_BYTES } from "@/lib/files";
+import { invalidateCatalogCache } from "@/lib/catalog/cache";
 
 export interface PublishFile {
   path: string;
@@ -380,6 +381,7 @@ export async function publishPackage({ userHandle, files, changelog }: PublishAr
     );
   }
 
+  invalidateCatalogCache();
   return {
     id: `${manifest.owner}/${manifest.name}`,
     version: manifest.version,

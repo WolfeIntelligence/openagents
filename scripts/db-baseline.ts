@@ -93,10 +93,13 @@ export interface BaselineRow {
  * Pure/sync/no DB access, so it's the piece the unit test exercises against
  * a fixture journal rather than a live database.
  */
-export function computeBaselineRows(migrationsFolder: string = MIGRATIONS_FOLDER): BaselineRow[] {
+/** `limit` restricts the baseline to the first N journal entries — the automatic
+ *  baseline in scripts/migrate.ts passes 1 so only the initial full-schema migration is
+ *  marked applied and every later migration still runs for real. */
+export function computeBaselineRows(migrationsFolder: string = MIGRATIONS_FOLDER, limit?: number): BaselineRow[] {
   const journalPath = path.join(migrationsFolder, "meta", "_journal.json");
   const journal = JSON.parse(fs.readFileSync(journalPath, "utf-8")) as { entries: JournalEntry[] };
-  return journal.entries.map((entry) => {
+  return journal.entries.slice(0, limit ?? journal.entries.length).map((entry) => {
     const raw = fs.readFileSync(path.join(migrationsFolder, `${entry.tag}.sql`), "utf-8");
     const hash = crypto.createHash("sha256").update(raw).digest("hex");
     return { tag: entry.tag, hash, createdAt: entry.when };
@@ -114,7 +117,8 @@ export function computeBaselineRows(migrationsFolder: string = MIGRATIONS_FOLDER
  */
 export async function runBaseline(
   sql: NeonSql,
-  migrationsFolder: string = MIGRATIONS_FOLDER
+  migrationsFolder: string = MIGRATIONS_FOLDER,
+  options: { onlyInitial?: boolean } = {}
 ): Promise<{ baselined: number }> {
   await sql.query(`CREATE SCHEMA IF NOT EXISTS "${MIGRATIONS_SCHEMA}"`);
   await sql.query(`
@@ -137,7 +141,7 @@ export async function runBaseline(
     );
   }
 
-  const rows = computeBaselineRows(migrationsFolder);
+  const rows = computeBaselineRows(migrationsFolder, options.onlyInitial ? 1 : undefined);
   for (const row of rows) {
     await sql.query(
       `INSERT INTO "${MIGRATIONS_SCHEMA}"."${MIGRATIONS_TABLE}" (hash, created_at) VALUES ($1, $2)`,
