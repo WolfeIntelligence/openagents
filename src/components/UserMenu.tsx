@@ -24,6 +24,7 @@ export async function handleSignOut() {
 const LINKS: { href: string; label: string }[] = [
   { href: "/settings/profile", label: "Profile" },
   { href: "/settings/tokens", label: "API tokens" },
+  { href: "/settings/sources", label: "GitHub sync" },
   { href: "/dashboard", label: "Dashboard" },
   { href: "/stars", label: "Stars" },
   { href: "/purchases", label: "Purchases" },
