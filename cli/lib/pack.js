@@ -1,20 +1,70 @@
 // Turns a package directory into the in-memory payload `openagents publish`
-// POSTs to `/api/v1/publish`: { manifest, files: [{path, content}], changelog? }.
+// POSTs to `/api/v1/publish`: { manifest, files: [{path, content, encoding?,
+// mode?}], changelog? }.
 //
 // Reuses the exact same validation `openagents validate` runs (via
 // `validatePackageDir`) so a package that passes `validate` never fails
 // `publish` for a reason `validate` didn't already report — then reads every
-// file UTF-8 and enforces the registry's size/count limits client-side, so a
-// bad publish fails locally instead of after an upload.
+// file as bytes and enforces the registry's size/count limits client-side, so
+// a bad publish fails locally instead of after an upload.
+//
+// Binary files (anything `isProbablyBinary` flags) are sent as base64 with
+// `encoding: "base64"`, mirroring src/lib/files.ts on the registry side —
+// duplicated here rather than imported since the CLI is a separate
+// zero-dependency package that can't reach into src/.
 
 import fs from "node:fs";
 import path from "node:path";
 import { validatePackageDir } from "./commands/validate.js";
 
-// Mirrors the registry contract: <=200 files, <=512KB each, <=2MB total.
+// Mirrors the registry contract: <=200 files, <=512KB each (text), <=2MB total.
 export const MAX_FILES = 200;
 export const MAX_FILE_BYTES = 512 * 1024;
 export const MAX_TOTAL_BYTES = 2 * 1024 * 1024;
+// A single binary file's decoded-size ceiling — larger than MAX_FILE_BYTES
+// since one image/asset can reasonably exceed the flat text limit, as long
+// as the whole upload still fits under MAX_TOTAL_BYTES. Mirrors
+// MAX_BINARY_BYTES in src/lib/files.ts.
+export const MAX_BINARY_BYTES = 2 * 1024 * 1024;
+
+const SNIFF_BYTES = 8192;
+
+/** Mirrors `isProbablyBinary` in src/lib/files.ts: a NUL byte in the first
+ *  8KB, or content that isn't valid UTF-8 anywhere in the buffer. */
+function isProbablyBinary(buf) {
+  const head = buf.subarray(0, SNIFF_BYTES);
+  if (head.includes(0)) return true;
+  try {
+    new TextDecoder("utf-8", { fatal: true }).decode(buf);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+/** Mirrors `isExecutableName` in src/lib/files.ts: a `.sh` file anywhere, or
+ *  an extensionless file under a `bin/` or `scripts/` directory. Used as the
+ *  mode fallback wherever a real POSIX execute bit isn't available (i.e. on
+ *  Windows — see `fileMode` below). */
+function isExecutableName(relPath) {
+  const posix = relPath.split(path.sep).join("/");
+  const base = posix.slice(posix.lastIndexOf("/") + 1);
+  if (/\.sh$/i.test(base)) return true;
+  if (base.includes(".")) return false;
+  const dirSegments = posix.slice(0, posix.length - base.length).split("/").filter(Boolean);
+  return dirSegments.includes("bin") || dirSegments.includes("scripts");
+}
+
+/** POSIX file mode to send for `relPath`: 0o755 when the real execute bit is
+ *  set on `stat.mode` (POSIX only — Node reports a fixed, meaningless mode
+ *  for every file on Windows), falling back to the name-based
+ *  `isExecutableName` heuristic; `undefined` (the registry's default 0o644)
+ *  otherwise. */
+function fileMode(relPath, stat) {
+  const posixExecutable = process.platform !== "win32" && (stat.mode & 0o111) !== 0;
+  if (posixExecutable) return 0o755;
+  return isExecutableName(relPath) ? 0o755 : undefined;
+}
 
 export class PackError extends Error {
   constructor(message, issues) {
@@ -27,9 +77,10 @@ export class PackError extends Error {
 /**
  * Validate and read the package in `dir` into a publish payload. Throws
  * `PackError` (with `.issues`, always non-empty) on any failure: an invalid
- * manifest, a file listed in the manifest that's missing on disk, a binary
- * file (content containing a NUL byte — publish accepts UTF-8 text only),
- * or exceeding `MAX_FILES` / `MAX_FILE_BYTES` / `MAX_TOTAL_BYTES`.
+ * manifest, a file listed in the manifest that's missing on disk, or a file
+ * exceeding `MAX_FILES` / `MAX_FILE_BYTES` (text) / `MAX_BINARY_BYTES`
+ * (binary) / `MAX_TOTAL_BYTES`. Binary files (detected via `isProbablyBinary`)
+ * are base64-encoded with `encoding: "base64"` rather than rejected.
  */
 export function packDirectory(dir) {
   const { manifest, issues } = validatePackageDir(dir);
@@ -52,22 +103,28 @@ export function packDirectory(dir) {
   for (const relPath of relPaths) {
     const fullPath = path.join(dir, relPath);
     let buf;
+    let stat;
     try {
       buf = fs.readFileSync(fullPath);
+      stat = fs.statSync(fullPath);
     } catch (err) {
       packIssues.push(`${relPath}: could not read file: ${err.message}`);
       continue;
     }
-    if (buf.includes(0)) {
-      packIssues.push(`${relPath}: binary files are not supported (publish accepts UTF-8 text only)`);
-      continue;
-    }
-    if (buf.length > MAX_FILE_BYTES) {
-      packIssues.push(`${relPath}: file too large (${formatSize(buf.length)}, max ${formatSize(MAX_FILE_BYTES)})`);
+
+    const binary = isProbablyBinary(buf);
+    const cap = binary ? MAX_BINARY_BYTES : MAX_FILE_BYTES;
+    if (buf.length > cap) {
+      packIssues.push(`${relPath}: file too large (${formatSize(buf.length)}, max ${formatSize(cap)})`);
       continue;
     }
     totalBytes += buf.length;
-    files.push({ path: relPath, content: buf.toString("utf8") });
+
+    const mode = fileMode(relPath, stat);
+    const file = { path: relPath, content: binary ? buf.toString("base64") : buf.toString("utf8") };
+    if (binary) file.encoding = "base64";
+    if (mode !== undefined) file.mode = mode;
+    files.push(file);
   }
 
   if (totalBytes > MAX_TOTAL_BYTES) {

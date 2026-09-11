@@ -10,6 +10,7 @@ import { Readable } from "node:stream";
 import zlib from "node:zlib";
 import * as tar from "tar-stream";
 import type { PublishFile } from "@/lib/publish";
+import { isProbablyBinary, MAX_BINARY_BYTES } from "@/lib/files";
 
 /** Thrown for any import failure; `status` is the HTTP status the route should return. */
 export class GitHubImportError extends Error {
@@ -112,13 +113,6 @@ function normalizeSubdir(raw: string | undefined): string | undefined {
     throw new GitHubImportError(400, [`invalid subdir: "${raw}"`]);
   }
   return trimmed;
-}
-
-/** Crude binary sniff (same idea as `git`'s): a NUL byte anywhere in the content means
- *  "not text" for our purposes. Cheaper than a full charset detector and good enough to
- *  keep binaries out of a system that stores file content as Postgres text. */
-function looksBinary(buf: Buffer): boolean {
-  return buf.includes(0);
 }
 
 async function fetchTarball(owner: string, repo: string, ref: string): Promise<ReadableStream<Uint8Array>> {
@@ -237,25 +231,32 @@ export async function fetchGitHubPackageFiles(
         }
 
         const buf = Buffer.concat(chunks);
-        // Oversized and binary files are skipped rather than failing the whole import —
-        // a repo can have a `dist/` or an image `openagent.yaml` never references, and
-        // that shouldn't block importing the package files that matter.
-        if (buf.length > MAX_FILE_BYTES) {
-          next();
-          return;
-        }
-        if (looksBinary(buf)) {
+        const binary = isProbablyBinary(buf);
+        // Text still gets the flat 512KB cap; binary content gets the larger
+        // MAX_BINARY_BYTES ceiling (mirrors publish.ts's own per-file limits).
+        // An oversized file is skipped rather than failing the whole import —
+        // a repo can have a `dist/` or a huge asset `openagent.yaml` never
+        // references, and that shouldn't block importing the files that matter.
+        if (buf.length > (binary ? MAX_BINARY_BYTES : MAX_FILE_BYTES)) {
           next();
           return;
         }
 
         totalBytes += buf.length;
         if (totalBytes > MAX_TOTAL_BYTES) {
-          fail(new GitHubImportError(400, [`repo too large to import (max ${MAX_TOTAL_BYTES} bytes of text)`]));
+          fail(new GitHubImportError(400, [`repo too large to import (max ${MAX_TOTAL_BYTES} bytes)`]));
           return;
         }
 
-        files.push({ path: entryPath, content: buf.toString("utf8") });
+        // tar's mode is the full POSIX permission bits (e.g. 0o100755); any
+        // execute bit set means the registry should preserve it as 0o755.
+        const mode = header.mode && (header.mode & 0o111) !== 0 ? 0o755 : undefined;
+
+        files.push(
+          binary
+            ? { path: entryPath, content: buf.toString("base64"), encoding: "base64", mode }
+            : { path: entryPath, content: buf.toString("utf8"), mode }
+        );
         next();
       });
     });

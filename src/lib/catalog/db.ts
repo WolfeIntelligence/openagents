@@ -93,7 +93,12 @@ async function rowToPackage(db: Db, row: PackageRow): Promise<Package> {
 
   const fileRows = latest
     ? await db
-        .select({ path: packageFiles.path, size: packageFiles.size })
+        .select({
+          path: packageFiles.path,
+          size: packageFiles.size,
+          encoding: packageFiles.encoding,
+          mode: packageFiles.mode,
+        })
         .from(packageFiles)
         .where(eq(packageFiles.versionId, latest.id))
     : [];
@@ -120,7 +125,12 @@ async function rowToPackage(db: Db, row: PackageRow): Promise<Package> {
     requires: [],
   };
 
-  const files: PackageFile[] = fileRows.map((f) => ({ path: f.path, size: f.size }));
+  const files: PackageFile[] = fileRows.map((f) => ({
+    path: f.path,
+    size: f.size,
+    encoding: f.encoding as "utf8" | "base64",
+    mode: f.mode ?? undefined,
+  }));
 
   return {
     id: `${row.owner}/${row.name}`,
@@ -474,7 +484,13 @@ export function createDbCatalog(seed: Catalog): Catalog {
                 )
                 .limit(1);
               if (fileRow) {
-                return { path: fileRow.path, size: fileRow.size, content: fileRow.content };
+                return {
+                  path: fileRow.path,
+                  size: fileRow.size,
+                  content: fileRow.content,
+                  encoding: fileRow.encoding as "utf8" | "base64",
+                  mode: fileRow.mode ?? undefined,
+                };
               }
             }
             // Package exists in DB but file wasn't found there — don't fall through to seed.

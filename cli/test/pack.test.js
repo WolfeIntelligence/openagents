@@ -3,7 +3,14 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { packDirectory, firstChangelogSection, PackError, MAX_FILE_BYTES, MAX_FILES } from "../lib/pack.js";
+import {
+  packDirectory,
+  firstChangelogSection,
+  PackError,
+  MAX_FILE_BYTES,
+  MAX_FILES,
+  MAX_BINARY_BYTES,
+} from "../lib/pack.js";
 
 function manifestYaml({ name = "demo-rules", entry = "RULES.md", files = ["RULES.md"] } = {}) {
   return [
@@ -103,18 +110,82 @@ describe("packDirectory: validation failures", () => {
   });
 });
 
-describe("packDirectory: client-side limits", () => {
-  test("rejects binary file content (NUL byte)", () => {
+describe("packDirectory: binary file handling", () => {
+  test("binary content (NUL byte) is base64-encoded with encoding: \"base64\"", () => {
+    const binaryContent = Buffer.from([0x52, 0x55, 0x4c, 0x45, 0x00, 0x53]);
     const dir = makePackageDir({
-      files: { "RULES.md": Buffer.from([0x52, 0x55, 0x4c, 0x45, 0x00, 0x53]) },
+      manifest: manifestYaml({ files: ["RULES.md", "blob.bin"] }),
+      files: { "RULES.md": "# Rules\n", "blob.bin": binaryContent },
+    });
+    const packed = packDirectory(dir);
+
+    const blob = packed.files.find((f) => f.path === "blob.bin");
+    assert.equal(blob.encoding, "base64");
+    assert.ok(Buffer.from(blob.content, "base64").equals(binaryContent));
+
+    const rules = packed.files.find((f) => f.path === "RULES.md");
+    assert.equal(rules.encoding, undefined);
+    assert.equal(rules.content, "# Rules\n");
+  });
+
+  test("content that isn't valid UTF-8 (no NUL byte) is also treated as binary", () => {
+    const binaryContent = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0xff, 0xfe, 0x0d, 0x0a]);
+    const dir = makePackageDir({
+      manifest: manifestYaml({ files: ["RULES.md", "logo.png"] }),
+      files: { "RULES.md": "# Rules\n", "logo.png": binaryContent },
+    });
+    const packed = packDirectory(dir);
+    const logo = packed.files.find((f) => f.path === "logo.png");
+    assert.equal(logo.encoding, "base64");
+    assert.ok(Buffer.from(logo.content, "base64").equals(binaryContent));
+  });
+
+  test("rejects a binary file over MAX_BINARY_BYTES", () => {
+    const big = Buffer.concat([Buffer.from([0x00]), Buffer.alloc(MAX_BINARY_BYTES, 0x41)]);
+    const dir = makePackageDir({
+      manifest: manifestYaml({ files: ["RULES.md", "blob.bin"] }),
+      files: { "RULES.md": "# Rules\n", "blob.bin": big },
     });
     assert.throws(() => packDirectory(dir), (err) => {
       assert.ok(err instanceof PackError);
-      assert.ok(err.issues.some((i) => /RULES\.md/.test(i) && /binary/.test(i)));
+      assert.ok(err.issues.some((i) => /blob\.bin/.test(i) && /too large/.test(i)));
       return true;
     });
   });
+});
 
+describe("packDirectory: file modes", () => {
+  test(".sh files and extensionless files under bin/ or scripts/ are marked executable (0o755)", () => {
+    const dir = makePackageDir({
+      manifest: manifestYaml({ files: ["RULES.md", "bin/run", "scripts/deploy.sh", "lib/util.js"] }),
+      files: {
+        "RULES.md": "# Rules\n",
+        "bin/run": "#!/bin/sh\necho hi\n",
+        "scripts/deploy.sh": "#!/bin/sh\necho deploy\n",
+        "lib/util.js": "module.exports = {};\n",
+      },
+    });
+    const packed = packDirectory(dir);
+    const modeOf = (p) => packed.files.find((f) => f.path === p)?.mode;
+
+    assert.equal(modeOf("bin/run"), 0o755);
+    assert.equal(modeOf("scripts/deploy.sh"), 0o755);
+    assert.equal(modeOf("lib/util.js"), undefined);
+    assert.equal(modeOf("RULES.md"), undefined);
+  });
+
+  test("honors a real POSIX executable bit when set", { skip: process.platform === "win32" }, () => {
+    const dir = makePackageDir({
+      manifest: manifestYaml({ files: ["RULES.md", "tool.js"] }),
+      files: { "RULES.md": "# Rules\n", "tool.js": "#!/usr/bin/env node\n" },
+    });
+    fs.chmodSync(path.join(dir, "tool.js"), 0o755);
+    const packed = packDirectory(dir);
+    assert.equal(packed.files.find((f) => f.path === "tool.js").mode, 0o755);
+  });
+});
+
+describe("packDirectory: client-side limits", () => {
   test("rejects a single file over MAX_FILE_BYTES", () => {
     const dir = makePackageDir({
       files: { "RULES.md": "x".repeat(MAX_FILE_BYTES + 1) },
