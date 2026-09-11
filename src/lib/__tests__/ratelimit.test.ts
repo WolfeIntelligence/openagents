@@ -8,7 +8,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { rateLimit, clientIp } from "../ratelimit";
+import { rateLimit, clientIp, fixedWindowResult, rateLimitDurable } from "../ratelimit";
 
 test("allows up to the limit, then blocks", () => {
   const key = `test-${Math.random()}`;
@@ -83,4 +83,70 @@ test("clientIp falls back to x-real-ip when x-forwarded-for is absent", () => {
 test("clientIp falls back to \"unknown\" when neither header is present", () => {
   const request = new Request("https://example.com");
   assert.equal(clientIp(request), "unknown");
+});
+
+// --- fixedWindowResult (pure fixed-window math for rateLimitDurable) -------
+
+test("fixedWindowResult allows when count is within the limit", () => {
+  const now = Date.now();
+  const result = fixedWindowResult(3, new Date(now), { limit: 5, windowMs: 60_000 }, now);
+  assert.equal(result.ok, true);
+  assert.equal(result.remaining, 2);
+  assert.equal(result.retryAfterSeconds, 0);
+});
+
+test("fixedWindowResult allows exactly at the limit (count === limit)", () => {
+  const now = Date.now();
+  const result = fixedWindowResult(5, new Date(now), { limit: 5, windowMs: 60_000 }, now);
+  assert.equal(result.ok, true);
+  assert.equal(result.remaining, 0);
+});
+
+test("fixedWindowResult blocks once count exceeds the limit", () => {
+  const now = Date.now();
+  const windowStart = new Date(now - 10_000);
+  const result = fixedWindowResult(6, windowStart, { limit: 5, windowMs: 60_000 }, now);
+  assert.equal(result.ok, false);
+  assert.equal(result.remaining, 0);
+  // 60s window, 10s elapsed => 50s left, rounded up.
+  assert.equal(result.retryAfterSeconds, 50);
+});
+
+test("fixedWindowResult never returns retryAfterSeconds below 1 when blocked", () => {
+  const now = Date.now();
+  // windowStart + windowMs is in the past relative to `now` (window already
+  // expired by the time we're computing this) — still must report >= 1s.
+  const windowStart = new Date(now - 120_000);
+  const result = fixedWindowResult(10, windowStart, { limit: 5, windowMs: 60_000 }, now);
+  assert.equal(result.ok, false);
+  assert.ok(result.retryAfterSeconds >= 1);
+});
+
+// --- rateLimitDurable fallback (DB off) ------------------------------------
+//
+// These tests run with DATABASE_URL unset (the default in this environment),
+// so `rateLimitDurable` must silently behave exactly like the in-memory
+// `rateLimit` it wraps — no throw, no hang, no attempt to reach a database.
+
+test("rateLimitDurable falls back to in-memory limiting when the DB is off", async () => {
+  assert.equal(process.env.DATABASE_URL, undefined, "test assumes no DATABASE_URL is set");
+
+  const key = `durable-fallback-${Math.random()}`;
+  const opts = { limit: 2, windowMs: 60_000 };
+
+  assert.equal((await rateLimitDurable(key, opts)).ok, true);
+  assert.equal((await rateLimitDurable(key, opts)).ok, true);
+  const blocked = await rateLimitDurable(key, opts);
+  assert.equal(blocked.ok, false);
+  assert.ok(blocked.retryAfterSeconds >= 1);
+});
+
+test("rateLimitDurable fallback tracks keys independently, like rateLimit", async () => {
+  const opts = { limit: 1, windowMs: 60_000 };
+  const a = `durable-a-${Math.random()}`;
+  const b = `durable-b-${Math.random()}`;
+
+  assert.equal((await rateLimitDurable(a, opts)).ok, true);
+  assert.equal((await rateLimitDurable(a, opts)).ok, false);
+  assert.equal((await rateLimitDurable(b, opts)).ok, true);
 });

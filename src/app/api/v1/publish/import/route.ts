@@ -3,15 +3,11 @@ import { z } from "zod";
 import { getRequester, hasScope } from "@/lib/requester";
 import { isDbEnabled } from "@/lib/db/client";
 import { error, json, preflight } from "@/lib/api";
-import { rateLimit } from "@/lib/ratelimit";
+import { RATE_LIMITS, withRateLimit } from "@/lib/ratelimit";
 import { publishPackage, PublishError } from "@/lib/publish";
 import { fetchGitHubPackageFiles, GitHubImportError } from "@/lib/github-import";
 
 export const runtime = "nodejs";
-
-// A publish-from-GitHub does a network fetch + tarball extraction per call, so it gets
-// its own (tighter) budget than the plain JSON publish route.
-const IMPORT_RATE_LIMIT = { limit: 5, windowMs: 60_000 };
 
 const bodySchema = z.object({
   repo: z.string().min(1),
@@ -37,14 +33,12 @@ export async function POST(req: NextRequest) {
   }
 
   // Keyed by user, not IP — the same CLI/browser client legitimately imports from
-  // different networks, but there's no reason one account needs more than 5 imports/min.
-  const limited = rateLimit(`publish-import:${requester.id}`, IMPORT_RATE_LIMIT);
-  if (!limited.ok) {
-    return json(
-      { error: "too many requests, slow down" },
-      { status: 429, headers: { "Retry-After": String(limited.retryAfterSeconds) } }
-    );
-  }
+  // different networks, but there's no reason one account needs more than 10 imports/min.
+  const limited = await withRateLimit(req, "publish-import", {
+    ...RATE_LIMITS.publishImport,
+    key: `publish-import:${requester.id}`,
+  });
+  if (limited) return limited;
 
   const body = await req.json().catch(() => null);
   const parsed = bodySchema.safeParse(body);

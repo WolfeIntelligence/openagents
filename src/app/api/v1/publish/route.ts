@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getRequester, hasScope } from "@/lib/requester";
 import { isDbEnabled } from "@/lib/db/client";
 import { error, json, preflight } from "@/lib/api";
+import { RATE_LIMITS, withRateLimit } from "@/lib/ratelimit";
 import { publishPackage, PublishError } from "@/lib/publish";
 
 export const runtime = "nodejs";
@@ -34,6 +35,12 @@ export async function POST(req: NextRequest) {
   if (!requester.handle) {
     return error(401, "unauthorized");
   }
+
+  const limited = await withRateLimit(req, "publish", {
+    ...RATE_LIMITS.publish,
+    key: `publish:${requester.id}`,
+  });
+  if (limited) return limited;
 
   const body = await req.json().catch(() => null);
   const parsed = bodySchema.safeParse(body);

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { getRequester } from "@/lib/requester";
 import { isDbEnabled } from "@/lib/db/client";
 import { error, json, preflight } from "@/lib/api";
-import { rateLimit } from "@/lib/ratelimit";
+import { RATE_LIMITS, withRateLimit } from "@/lib/ratelimit";
 import { createToken, listTokens, TokenError, TOKEN_SCOPES } from "@/lib/tokens";
 
 export const runtime = "nodejs";
@@ -11,7 +11,6 @@ export const runtime = "nodejs";
 // Minting a token has to prove you're a human at the keyboard with a browser session —
 // a token can never be used to create another token, or a leaked token could mint
 // itself an unlimited supply of siblings after being revoked once discovered.
-const CREATE_RATE_LIMIT = { limit: 10, windowMs: 60_000 };
 
 const bodySchema = z.object({
   name: z.string().min(1).max(64),
@@ -48,13 +47,11 @@ export async function POST(req: NextRequest) {
     return error(403, "a token cannot be used to create another token; sign in with a browser session");
   }
 
-  const limited = rateLimit(`tokens-create:${requester.id}`, CREATE_RATE_LIMIT);
-  if (!limited.ok) {
-    return json(
-      { error: "too many requests, slow down" },
-      { status: 429, headers: { "Retry-After": String(limited.retryAfterSeconds) } }
-    );
-  }
+  const limited = await withRateLimit(req, "tokens-create", {
+    ...RATE_LIMITS.tokensCreate,
+    key: `tokens-create:${requester.id}`,
+  });
+  if (limited) return limited;
 
   const body = await req.json().catch(() => null);
   const parsed = bodySchema.safeParse(body);

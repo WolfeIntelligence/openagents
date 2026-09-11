@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { createCheckoutSession, isStripeEnabled } from "@/lib/stripe";
 import { getCatalog } from "@/lib/catalog";
 import { hasPurchased } from "@/lib/purchases";
+import { RATE_LIMITS, withRateLimit } from "@/lib/ratelimit";
 
 const bodySchema = z.object({ owner: z.string().min(1), name: z.string().min(1) });
 
@@ -16,6 +17,12 @@ export async function POST(req: NextRequest) {
   if (!session?.user?.id) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
+
+  const limited = await withRateLimit(req, "checkout", {
+    ...RATE_LIMITS.checkout,
+    key: `checkout:${session.user.id}`,
+  });
+  if (limited) return limited;
 
   const json = await req.json().catch(() => null);
   const parsed = bodySchema.safeParse(json);
