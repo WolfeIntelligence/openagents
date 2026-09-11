@@ -14,7 +14,7 @@ is informed, and how far a given approval extends.
 ## Install
 
 ```bash
-npx openagents add openagents/human-in-the-loop
+npx openagents-cli add openagents/human-in-the-loop
 ```
 
 | Runtime | Installed to |

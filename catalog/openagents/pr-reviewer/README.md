@@ -21,13 +21,13 @@ it, not whether the feature should exist.
 ## Install
 
 ```bash
-npx openagents add openagents/pr-reviewer
+npx openagents-cli add openagents/pr-reviewer
 ```
 
 Or pick a runtime explicitly:
 
 ```bash
-npx openagents add openagents/pr-reviewer --runtime claude-code
+npx openagents-cli add openagents/pr-reviewer --runtime claude-code
 ```
 
 | Runtime | Installed to |

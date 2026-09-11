@@ -14,7 +14,7 @@ recorded baseline so "it got better" becomes a number you can check.
 ## Install
 
 ```bash
-npx openagents add openagents/eval-harness
+npx openagents-cli add openagents/eval-harness
 ```
 
 | Runtime | Installed to |

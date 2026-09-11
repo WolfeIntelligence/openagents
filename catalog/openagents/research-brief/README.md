@@ -18,7 +18,7 @@ well-corroborated claims from single-source or disputed ones.
 ## Install
 
 ```bash
-npx openagents add openagents/research-brief
+npx openagents-cli add openagents/research-brief
 ```
 
 | Runtime | Installed to |

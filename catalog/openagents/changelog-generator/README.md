@@ -15,7 +15,7 @@ history following Conventional Commits, but classifies unstructured commits too.
 ## Install
 
 ```bash
-npx openagents add openagents/changelog-generator
+npx openagents-cli add openagents/changelog-generator
 ```
 
 | Runtime | Installed to |

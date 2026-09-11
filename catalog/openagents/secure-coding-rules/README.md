@@ -17,7 +17,7 @@ follows on every edit for the life of the project.
 ## Install
 
 ```bash
-npx openagents add openagents/secure-coding-rules
+npx openagents-cli add openagents/secure-coding-rules
 ```
 
 | Runtime | Installed to |

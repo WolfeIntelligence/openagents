@@ -13,7 +13,7 @@ one function. These rules target the mistakes that survive a passing test run.
 ## Install
 
 ```bash
-npx openagents add openagents/python-style-rules
+npx openagents-cli add openagents/python-style-rules
 ```
 
 | Runtime | Installed to |

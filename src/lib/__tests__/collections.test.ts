@@ -124,13 +124,13 @@ test("nextPosition: one past the highest existing position", () => {
 // ---------------------------------------------------------------------------
 
 test("buildInstallAllCommand: empty collection yields an empty string", () => {
-  assert.equal(buildInstallAllCommand([], "openagents"), "");
+  assert.equal(buildInstallAllCommand([], "openagents-cli"), "");
 });
 
 test("buildInstallAllCommand: one package", () => {
   assert.equal(
-    buildInstallAllCommand([{ owner: "openagents", name: "pr-reviewer" }], "openagents"),
-    "npx openagents add openagents/pr-reviewer"
+    buildInstallAllCommand([{ owner: "openagents", name: "pr-reviewer" }], "openagents-cli"),
+    "npx openagents-cli add openagents/pr-reviewer"
   );
 });
 
@@ -140,9 +140,9 @@ test("buildInstallAllCommand: multiple packages chain with && in order, one line
       { owner: "a", name: "one" },
       { owner: "b", name: "two" },
     ],
-    "openagents"
+    "openagents-cli"
   );
-  assert.equal(cmd, "npx openagents add a/one && npx openagents add b/two");
+  assert.equal(cmd, "npx openagents-cli add a/one && npx openagents-cli add b/two");
   assert.equal(cmd.includes("\n"), false, "must be a single line");
 });
 

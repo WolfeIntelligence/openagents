@@ -3,7 +3,7 @@
 // The install command shown on the site is `npx <spec> add owner/name`. Until the
 // `openagents` package is published to npm, <spec> is the URL of this tarball (npx
 // installs straight from a tarball URL), so visitors get a working command with no
-// npm account involved. Once it is published, set NEXT_PUBLIC_CLI_PACKAGE=openagents
+// npm account involved. Once it is published, set NEXT_PUBLIC_CLI_PACKAGE=openagents-cli
 // and the site switches back to the short form; this script keeps running harmlessly.
 //
 // Runs as `prebuild` (npm run build) — `npm pack` needs no installed dependencies.

@@ -14,7 +14,7 @@ workflow checks the things that cause outages.
 ## Install
 
 ```bash
-npx openagents add openagents/db-migration-review
+npx openagents-cli add openagents/db-migration-review
 ```
 
 | Runtime | Installed to |

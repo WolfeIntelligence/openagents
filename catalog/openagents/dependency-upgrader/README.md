@@ -16,7 +16,7 @@ version-bump size. Runs the test suite after every upgrade.
 ## Install
 
 ```bash
-npx openagents add openagents/dependency-upgrader
+npx openagents-cli add openagents/dependency-upgrader
 ```
 
 | Runtime | Installed to |

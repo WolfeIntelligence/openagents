@@ -14,7 +14,7 @@ are duplicates, and which questions this dataset simply cannot answer.
 ## Install
 
 ```bash
-npx openagents add openagents/data-cleaning
+npx openagents-cli add openagents/data-cleaning
 ```
 
 | Runtime | Installed to |

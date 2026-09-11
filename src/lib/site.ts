@@ -38,8 +38,8 @@ export function siteUrl(): string {
 
 /**
  * What `npx` should run to get the CLI. Once `openagents` is published to npm, set
- * NEXT_PUBLIC_CLI_PACKAGE=openagents and every install snippet becomes
- * `npx openagents ...`; until then the site serves its own tarball (built by
+ * NEXT_PUBLIC_CLI_PACKAGE=openagents-cli and every install snippet becomes
+ * `npx openagents-cli ...`; until then the site serves its own tarball (built by
  * scripts/pack-cli.mjs), which npx installs directly from the URL.
  */
 export function cliSpec(): string {

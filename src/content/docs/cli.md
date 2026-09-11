@@ -12,9 +12,9 @@ packages from the command line. Every request it makes sends
 `User-Agent: openagents-cli/<version>` so the registry can attribute installs.
 
 ```bash
-npx openagents --help
+npx openagents-cli --help
 # or install it globally:
-npm install -g openagents
+npm install -g openagents-cli-cli
 ```
 
 An unrecognized global or command flag is an error (`unknown option: --foo`), not a

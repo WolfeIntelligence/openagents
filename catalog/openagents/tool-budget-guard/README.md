@@ -15,7 +15,7 @@ the ceiling is hit.
 ## Install
 
 ```bash
-npx openagents add openagents/tool-budget-guard
+npx openagents-cli add openagents/tool-budget-guard
 ```
 
 | Runtime | Installed to |

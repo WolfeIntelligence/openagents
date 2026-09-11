@@ -14,7 +14,7 @@ through results, and which fields you will regret making required.
 ## Install
 
 ```bash
-npx openagents add openagents/api-design-review
+npx openagents-cli add openagents/api-design-review
 ```
 
 | Runtime | Installed to |

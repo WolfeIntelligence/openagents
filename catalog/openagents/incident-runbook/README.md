@@ -16,7 +16,7 @@ items.
 ## Install
 
 ```bash
-npx openagents add openagents/incident-runbook
+npx openagents-cli add openagents/incident-runbook
 ```
 
 | Runtime | Installed to |

@@ -97,7 +97,7 @@ export function installCommand(
   owner: string,
   name: string,
   runtime?: RuntimeId,
-  cli: string = "openagents"
+  cli: string = "openagents-cli"
 ): string {
   const base = `npx ${cli} add ${owner}/${name}`;
   return runtime ? `${base} --runtime ${runtime}` : base;

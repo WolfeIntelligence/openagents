@@ -15,7 +15,7 @@ without reading the full diff first.
 ## Install
 
 ```bash
-npx openagents add openagents/commit-conventions
+npx openagents-cli add openagents/commit-conventions
 ```
 
 | Runtime | Installed to |

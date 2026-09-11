@@ -10,14 +10,14 @@ describe("purchaseReceipt", () => {
       name: "pr-reviewer",
       amountCents: 500,
       currency: "usd",
-      installCommand: "npx openagents add openagents/pr-reviewer",
+      installCommand: "npx openagents-cli add openagents/pr-reviewer",
       receiptUrl: null,
     });
 
     assert.equal(content.subject, "Your receipt for openagents/pr-reviewer");
     assert.match(content.text, /PR Reviewer/);
     assert.match(content.text, /\$5\.00/);
-    assert.match(content.text, /npx openagents add openagents\/pr-reviewer/);
+    assert.match(content.text, /npx openagents-cli add openagents\/pr-reviewer/);
     assert.match(content.html, /PR Reviewer/);
   });
 
@@ -28,7 +28,7 @@ describe("purchaseReceipt", () => {
       name: "pr-reviewer",
       amountCents: 500,
       currency: "usd",
-      installCommand: "npx openagents add openagents/pr-reviewer",
+      installCommand: "npx openagents-cli add openagents/pr-reviewer",
       receiptUrl: "https://pay.stripe.com/receipts/abc",
     });
     assert.match(withReceipt.text, /https:\/\/pay\.stripe\.com\/receipts\/abc/);
@@ -39,7 +39,7 @@ describe("purchaseReceipt", () => {
       name: "pr-reviewer",
       amountCents: 500,
       currency: "usd",
-      installCommand: "npx openagents add openagents/pr-reviewer",
+      installCommand: "npx openagents-cli add openagents/pr-reviewer",
       receiptUrl: undefined,
     });
     assert.doesNotMatch(withoutReceipt.text, /receipt/i);
