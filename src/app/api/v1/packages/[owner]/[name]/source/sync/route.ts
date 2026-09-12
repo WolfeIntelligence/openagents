@@ -8,6 +8,7 @@ import { rateLimit } from "@/lib/ratelimit";
 import { fetchGitHubPackageFiles, GitHubImportError } from "@/lib/github-import";
 import { publishPackage, PublishError } from "@/lib/publish";
 import { getSourceByPackage, recordSyncResult, repoUrl } from "@/lib/sources";
+import { isPackageOwner } from "@/lib/access";
 
 export const runtime = "nodejs";
 
@@ -40,7 +41,7 @@ export async function POST(
   }
 
   const admin = await isAdmin(requester);
-  const isOwner = Boolean(requester.handle && requester.handle === pkg.owner);
+  const isOwner = await isPackageOwner(requester, pkg);
   if (!isOwner && !admin) {
     return error(403, "only the package owner or an admin can do this");
   }

@@ -7,6 +7,7 @@ import { error, json, preflight } from "@/lib/api";
 import { rateLimit } from "@/lib/ratelimit";
 import { PackageActionError, deletePackage, isReviewRequired, setPackageStatus } from "@/lib/moderation";
 import { notifyPackageStatusChanged } from "@/lib/notify";
+import { isPackageOwner } from "@/lib/access";
 
 export const runtime = "nodejs";
 
@@ -40,7 +41,7 @@ export async function POST(
   }
 
   const admin = await isAdmin(requester);
-  const isOwner = Boolean(requester.handle && requester.handle === pkg.owner);
+  const isOwner = await isPackageOwner(requester, pkg);
   if (!isOwner && !admin) {
     return error(403, "only the package owner or an admin can do this");
   }

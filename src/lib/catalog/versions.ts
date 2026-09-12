@@ -110,6 +110,7 @@ async function buildPackageForVersion(db: Db, row: PackageRow, versionRow: Versi
     versions: sortVersionsDesc(allVersionRows.map(toPackageVersion)),
     stats: statsMap.get(statsKey(row.owner, row.name)) ?? ZERO_STATS,
     featured: row.featured,
+    ownerType: row.ownerType === "org" ? "org" : "user",
     status: row.status as PackageStatus,
     deprecation:
       row.status === "deprecated"

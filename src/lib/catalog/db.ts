@@ -78,6 +78,7 @@ function rowToSummary(row: PackageRow): PackageSummary {
     // with the real counts; this layer never stores its own copy. See ./index.
     stats: { downloads: 0, stars: 0 },
     featured: row.featured,
+    ownerType: row.ownerType === "org" ? "org" : "user",
     status: row.status as PackageStatus,
     deprecation:
       row.status === "deprecated"
@@ -159,6 +160,7 @@ async function rowToPackage(db: Db, row: PackageRow): Promise<Package> {
       })),
     stats: { downloads: 0, stars: 0 }, // filled in by `withStats` — see ./index
     featured: row.featured,
+    ownerType: row.ownerType === "org" ? "org" : "user",
     status: row.status as PackageStatus,
     deprecation:
       row.status === "deprecated"
