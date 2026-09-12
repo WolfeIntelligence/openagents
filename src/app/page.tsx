@@ -12,6 +12,7 @@ import { cliSpec } from "@/lib/site";
 import { installCommand } from "@/lib/runtimes";
 import { listCollections } from "@/lib/collections";
 import { CollectionCard } from "@/components/CollectionCard";
+import { RecentlyViewed } from "@/components/RecentlyViewed";
 
 const STEPS = [
   {
@@ -84,6 +85,10 @@ export default async function HomePage() {
           </div>
         </div>
       </section>
+
+      {/* Recently viewed (Z7) — client-only, renders nothing on first paint
+          or when localStorage has nothing recorded yet. */}
+      <RecentlyViewed />
 
       {/* Kind tiles */}
       <section className="mx-auto max-w-7xl px-4 py-14 sm:px-6 lg:px-8">

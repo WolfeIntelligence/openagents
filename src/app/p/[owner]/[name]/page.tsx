@@ -32,6 +32,7 @@ import { buildSoftwareSourceCodeLd } from "@/lib/seo";
 import { formatPricing } from "@/lib/format";
 import { getActivePurchase } from "@/lib/purchases";
 import { AddToCollection } from "@/components/AddToCollection";
+import { RecentlyViewedRecord } from "@/components/RecentlyViewed";
 
 type Params = { owner: string; name: string };
 type TabId = "readme" | "files" | "manifest" | "versions" | "reviews";
@@ -401,6 +402,7 @@ export default async function PackagePage({
           </div>
         </aside>
       </div>
+      <RecentlyViewedRecord owner={owner} name={name} title={manifest.title} kind={manifest.kind} />
     </div>
   );
 }
