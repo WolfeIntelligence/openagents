@@ -81,13 +81,17 @@ export default function TermsPage() {
             account and the package both exist.
           </li>
           <li>
-            <strong>Refunds.</strong> We handle refund requests case-by-case. Email{" "}
-            <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a> within 14 days of
-            purchase and we&rsquo;ll work it out with you.
+            <strong>Refunds.</strong> One-time purchases can be refunded within 14 days:
+            open a request from your <a href="/purchases">purchases page</a> and the seller
+            (or we) will decide within 7 days. Subscriptions are cancelled through the billing
+            portal instead. Full policy: <a href="/refund-policy">/refund-policy</a>. Questions:{" "}
+            <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>.
           </li>
           <li>
-            <strong>Subscriptions.</strong> {SITE_NAME} does not currently offer
-            subscription pricing — every paid package today is a one-time purchase.
+            <strong>Subscriptions.</strong> Some packages are sold as monthly or yearly
+            subscriptions billed through Stripe. Access lasts until the end of the paid
+            period; cancel any time from the billing portal on your purchases page, and
+            you keep access until that period ends.
           </li>
         </ul>
 
