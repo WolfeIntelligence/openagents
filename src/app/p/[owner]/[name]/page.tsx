@@ -32,6 +32,7 @@ import { buildSoftwareSourceCodeLd } from "@/lib/seo";
 import { formatPricing } from "@/lib/format";
 import { getActivePurchase } from "@/lib/purchases";
 import { AddToCollection } from "@/components/AddToCollection";
+import { isPackageOwner } from "@/lib/access";
 
 type Params = { owner: string; name: string };
 type TabId = "readme" | "files" | "manifest" | "versions" | "reviews";
@@ -110,7 +111,11 @@ export default async function PackagePage({
   // here and reused below to drive the owner action panel.
   const requester = await getRequester();
   const viewerIsAdmin = await isAdmin(requester);
-  const viewerIsOwner = Boolean(requester?.handle && requester.handle === pkg.owner);
+  // G-P3: org owners/admins count as the package owner too — see access.ts's
+  // isPackageOwner. `pkg` doesn't carry `ownerType` yet (see that helper's
+  // "NEEDS CHANGE ELSEWHERE" note), so this stays equivalent to the old plain
+  // handle comparison until that plumbing lands.
+  const viewerIsOwner = await isPackageOwner(requester, pkg);
   if ((pkg.status === "pending" || pkg.status === "unlisted") && !viewerIsOwner && !viewerIsAdmin) {
     notFound();
   }

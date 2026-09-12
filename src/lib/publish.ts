@@ -10,6 +10,7 @@ import { isGreater, SemverError } from "@/lib/semver";
 import { isReservedHandle } from "@/lib/reserved";
 import { MAX_BINARY_BYTES } from "@/lib/files";
 import { invalidateCatalogCache } from "@/lib/catalog/cache";
+import { getMemberRole } from "@/lib/orgs";
 
 export interface PublishFile {
   path: string;
@@ -207,10 +208,23 @@ export async function publishPackage({ userHandle, files, changelog }: PublishAr
     throw new PublishError(400, [err instanceof Error ? err.message : String(err)]);
   }
 
+  // G-P3: manifest.owner may name the caller's own handle (ownerType "user", the
+  // original rule) or an organization the caller is a member of with role owner or
+  // admin (ownerType "org", org members with role "member" can't publish — see
+  // access.ts's isPackageOwner doc comment for why that split). Org membership is
+  // keyed by userId, not handle, so the caller's id is looked up from `userHandle`
+  // first — this keeps `PublishArgs` unchanged (every existing caller only ever had
+  // the handle on hand) rather than threading a new field through every call site.
+  let ownerType: "user" | "org" = "user";
   if (manifest.owner !== userHandle) {
-    throw new PublishError(400, [
-      `manifest owner "${manifest.owner}" does not match your handle "${userHandle}"`,
-    ]);
+    const [caller] = await db.select({ id: users.id }).from(users).where(eq(users.handle, userHandle)).limit(1);
+    const role = caller ? await getMemberRole(manifest.owner, caller.id) : null;
+    if (role !== "owner" && role !== "admin") {
+      throw new PublishError(400, [
+        `manifest owner "${manifest.owner}" does not match your handle "${userHandle}", and you're not an owner/admin of that organization`,
+      ]);
+    }
+    ownerType = "org";
   }
 
   // Defense-in-depth: handle derivation (auth.ts) already keeps reserved words and seed
@@ -282,6 +296,7 @@ export async function publishPackage({ userHandle, files, changelog }: PublishAr
     currency: manifest.pricing.currency,
     entry: manifest.entry,
     latestVersion: manifest.version,
+    ownerType,
   };
 
   // neon-http has no transactions; these run sequentially and are accepted as such.

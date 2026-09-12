@@ -10,10 +10,10 @@
 // Safe to import with zero env vars: every export no-ops (or reports
 // "unavailable") when DATABASE_URL is unset.
 
-import { and, eq, ne } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { packages, users } from "@/lib/db/schema";
-import { isReservedHandle } from "@/lib/reserved";
+import { isHandleTaken, isReservedHandle } from "@/lib/reserved";
 
 export const MAX_BIO_LENGTH = 500;
 export const MAX_NAME_LENGTH = 100;
@@ -151,12 +151,10 @@ export async function updateOwnProfile(
         };
       }
 
-      const [taken] = await db
-        .select({ id: users.id })
-        .from(users)
-        .where(and(eq(users.handle, input.handle), ne(users.id, userId)))
-        .limit(1);
-      if (taken) {
+      // G-P3: orgs and users share one handle namespace, so a handle already
+      // taken by an organization blocks a user rename too (`isHandleTaken`
+      // checks both tables).
+      if (await isHandleTaken(input.handle, { excludeUserId: userId })) {
         return { ok: false, status: 409, message: "that handle is already taken" };
       }
 
