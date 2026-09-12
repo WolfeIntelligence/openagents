@@ -56,8 +56,10 @@ export async function run(args, { installFn = installPackage } = {}) {
     process.exitCode = 1;
     return;
   }
+  let runtimeWasGuessed = false;
   if (!runtime) {
     runtime = detectRuntime(projectDir, util.existsSync);
+    runtimeWasGuessed = true;
   }
 
   const noDeps = Boolean(args["no-deps"] ?? args.noDeps);
@@ -129,6 +131,16 @@ export async function run(args, { installFn = installPackage } = {}) {
       process.exitCode = 1;
       return;
     }
+  }
+
+  if (runtimeWasGuessed && runtime === "generic") {
+    const where = path.relative(process.cwd(), projectDir) || ".";
+    console.log(
+      `
+⚠ No runtime folder (.claude/, .cursor/, .codex/) was found in ${where}, so this was installed as "generic".
+` +
+        `  Claude Code and Cursor will not discover it there. Re-run with --runtime claude-code (or cursor, codex) to install it where your agent looks.`
+    );
   }
 }
 
@@ -236,9 +248,9 @@ export async function installPackage({ owner, name, version, manifest, downloadU
   const shimNote = applyRuntimeShims({ manifest: shimManifest, runtime, destDir, projectDir });
 
   console.log(`\n✓ installed ${id}@${version || "?"} for runtime "${runtime}"`);
-  console.log(`  location: ${path.relative(process.cwd(), destDir) || "."}`);
+  console.log(`  location:   ${path.relative(process.cwd(), destDir) || "."}`);
   if (manifest?.entry) {
-    console.log(`  entry:    ${path.relative(process.cwd(), path.join(destDir, manifest.entry)).split(path.sep).join("/")}`);
+    console.log(`  entry file: ${path.relative(process.cwd(), path.join(destDir, manifest.entry)).split(path.sep).join("/")}`);
   }
   if (shimNote) {
     console.log(`  note:     ${shimNote}`);

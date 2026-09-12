@@ -59,7 +59,7 @@ export async function StatsPanel({
           <dd className="text-fg">{new Date(updatedAt).toLocaleDateString()}</dd>
         </div>
         <div className="flex justify-between">
-          <dt className="text-fg-muted">Source</dt>
+          <dt className="text-fg-muted">Catalog</dt>
           <dd className="text-fg">{source}</dd>
         </div>
       </dl>

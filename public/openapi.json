@@ -3,7 +3,7 @@
   "info": {
     "title": "OpenAgents API",
     "version": "4.0.0",
-    "description": "Every route under /api/v1, plus checkout, the billing portal, the Stripe and GitHub webhooks, Connect onboarding, and the internal cron routes. Some paths describe target contracts landing alongside this document across several batches \u2014 batch 2 (tokens, versions, lifecycle/moderation, reviews, analytics, search facets, tags), batch 3 (subscriptions, collections, binary files, GitHub auto-sync, durable rate limits, account export/delete, badges/OG/RSS), and batch 4 (organizations, content scanning and security advisories, version diffs and changelog, refunds, seller validation, cron-driven download rollups and analytics) \u2014 see docs/AUDIT-2026-09.md and src/content/docs/api.md for narrative docs and current status. All responses are JSON except tarball/raw-file/badge/OG-image downloads. Every non-2xx response is shaped like Error unless noted otherwise.",
+    "description": "Every route under /api/v1, plus checkout, the billing portal, the Stripe and GitHub webhooks, Connect onboarding, and the internal cron routes (bearer CRON_SECRET). Reads are unauthenticated; writes accept a session cookie or a scoped personal access token (Authorization: Bearer oa_...). Rate limits and error shapes are documented per operation.",
     "license": {
       "name": "MIT"
     }
