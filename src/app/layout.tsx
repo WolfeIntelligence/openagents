@@ -50,7 +50,8 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
           Skip to content
         </a>
         <Header />
-        <main id="main-content" className="flex-1">
+        {/* tabIndex lets the skip link actually move keyboard focus here. */}
+        <main id="main-content" tabIndex={-1} className="flex-1 outline-none">
           {children}
         </main>
         <Footer />

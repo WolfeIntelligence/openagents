@@ -75,7 +75,7 @@ for (const path of PAGES_WITH_LABELED_INPUTS) {
   });
 }
 
-test.fixme(
+test(
   "every form input has an explicit label on /collections",
   async ({ page }) => {
     // Needs change elsewhere: src/app/collections/page.tsx's `PageShell`
@@ -110,7 +110,7 @@ test("the skip link exists and lets keyboard users jump past the header", async 
   await expect(skipLink).toBeFocused();
 });
 
-test.fixme(
+test(
   "activating the skip link moves focus to #main-content",
   async ({ page }) => {
     // Needs change elsewhere: `<main id="main-content">` in src/app/layout.tsx

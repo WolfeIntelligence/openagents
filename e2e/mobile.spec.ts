@@ -55,7 +55,7 @@ test("no horizontal overflow on /explore", async ({ page }) => {
   expect(overflow).toBeLessThanOrEqual(0);
 });
 
-test.fixme(
+test(
   "no horizontal overflow on /p/openagents/pr-reviewer",
   async ({ page }) => {
     // Needs change elsewhere: `.prose-oa table` in src/app/globals.css sets

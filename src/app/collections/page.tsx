@@ -83,7 +83,11 @@ function PageShell({ q, children }: { q?: string; children: ReactNode }) {
         </Link>
       </div>
       <form action="/collections" method="get" className="mb-8 max-w-md">
+        <label htmlFor="collections-q" className="sr-only">
+          Search collections
+        </label>
         <input
+          id="collections-q"
           type="search"
           name="q"
           defaultValue={q}
