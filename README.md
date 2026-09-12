@@ -141,6 +141,32 @@ See [`cli/README.md`](./cli/README.md) for every command.
 - **Error monitoring** — every server error is logged as structured JSON to stderr;
   set `SENTRY_DSN` to also forward it to Sentry, no `@sentry/nextjs` dependency
   required (see `src/instrumentation.ts`, `src/lib/monitoring.ts`).
+- **Organizations** — a package's owner can be a user or a shared **organization**
+  handle (`owner`/`admin`/`member` roles), with its own profile page
+  (`/org/{handle}`) and a `POST /api/v1/packages/{owner}/{name}/transfer` route to
+  move a package between owners.
+- **Trust & safety** — every publish runs an automated content scan
+  (`src/lib/scan.ts`: prompt-injection attempts, hidden/encoded text, credential
+  reads paired with network calls, calls to unknown hosts, destructive commands,
+  leaked secrets, obfuscated eval) that can hold a new package for review or unlist
+  a flagged update; admins can also post security advisories against a package,
+  which the CLI surfaces at install time and blocks a `critical` one behind
+  `--force`.
+- **Version diffs & changelog** — `GET .../versions/{version}/diff` powers a
+  file-by-file compare page (`/p/{owner}/{name}/compare`) and a site-wide
+  `/changelog`.
+- **Refunds** — a buyer can request a refund on a one-time purchase within 14 days;
+  the seller (or an admin) approves or denies it, and approval reverses both the
+  charge and the platform fee via Stripe.
+- **Seller onboarding** — `POST /api/v1/validate` runs manifest + README-quality
+  checks with no side effects, powering the publish wizard's Check step before a
+  creator commits to submitting.
+- **Ops** — three `CRON_SECRET`-authorized Vercel Cron routes (daily download
+  rollups feeding `/dashboard`/trending, hourly cleanup, daily review reminders);
+  `429` responses carry `X-RateLimit-*` headers; admin analytics at
+  `/admin/analytics`.
+- **End-to-end tests** — a Playwright suite (`npm run test:e2e`, see `docs/E2E.md`)
+  runs in CI against a zero-env build, alongside the unit/lint/typecheck steps.
 
 Full technical spec, routes, and directory layout: **[SPEC.md](./SPEC.md)**.
 

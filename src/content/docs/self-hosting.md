@@ -182,6 +182,28 @@ logged, never surfaced to the user or allowed to fail the action that triggered 
 |---|---|
 | `SOURCE_WEBHOOK_KEY` | Signing key used to verify inbound GitHub webhook requests for [linked package sources](/docs/publishing#github-auto-sync) (`POST /api/webhooks/github/{id}`). Optional — falls back to `AUTH_SECRET` when unset, so a deployment that already has auth configured needs nothing extra here; set it separately only if you want webhook verification on a distinct key from session signing. |
 
+### Cron jobs
+
+| Variable | Description |
+|---|---|
+| `CRON_SECRET` | Bearer token Vercel Cron sends as `Authorization: Bearer <CRON_SECRET>` on every scheduled invocation. Required for the three cron routes below to run — without it set, they respond `401` and do nothing (they're never invoked unauthenticated). |
+
+Three routes, scheduled via `vercel.json`'s `crons` config (Vercel sets `CRON_SECRET`
+as the bearer token automatically on the hosted deployment — for a self-host on
+another platform, wire up your own scheduler to call these on the same cadence with
+the same header):
+
+| Route | Schedule | Does |
+|---|---|---|
+| `POST /api/cron/rollup-downloads` | Daily | Aggregates the prior UTC day's `download_events` into the `download_rollups` table — per package/day, with per-runtime and per-version breakdowns — so `/dashboard` and `sort=trending` don't scan raw events as they grow. |
+| `POST /api/cron/cleanup` | Hourly | Expires stale rate-limit windows and prunes abandoned checkout artifacts. |
+| `POST /api/cron/review-reminders` | Daily | Emails a reminder for packages that have sat in the pending-review or scan-flagged queue past a threshold (via `src/lib/notify.ts` — a no-op without `RESEND_API_KEY`, same as every other notification). |
+
+See [API Reference](/docs/api#cron-jobs) for the request/response shape. Without
+`DATABASE_URL` configured, there's nothing for these to roll up or clean, and
+`rollup-downloads`/`cleanup` are effectively no-ops (still `200`, just
+`processed: 0`).
+
 ### Analytics
 
 | Variable | Description |
@@ -253,6 +275,20 @@ Visit `http://localhost:3000`. With `.env.local` empty, you get the seed-catalog
 experience described above — a good way to verify the zero-config baseline before
 layering on database/auth/payments.
 
+## End-to-end tests
+
+```bash
+npm run test:e2e
+```
+
+A Playwright suite (see `docs/E2E.md` for the full breakdown of what's covered) that
+drives the built app in a real browser — install, search, publish, and checkout
+flows — rather than just unit-testing route handlers. CI runs it against a
+**zero-env build** (no `DATABASE_URL`/auth/Stripe configured), the same zero-config
+baseline described throughout this doc, so it doubles as a regression check that the
+app still degrades gracefully with nothing set. Run it locally before opening a PR
+that touches UI — see [Contributing](https://github.com/WolfeIntelligence/openagents/blob/main/CONTRIBUTING.md).
+
 ## Choosing what to enable
 
 | You want... | Set |
@@ -265,6 +301,7 @@ layering on database/auth/payments.
 | Purchase/sale/report/status emails | + `RESEND_API_KEY`, `EMAIL_FROM`, and optionally `ADMIN_EMAIL` |
 | Auto-republish on a linked GitHub repo's release/tag | nothing extra — `SOURCE_WEBHOOK_KEY` is optional, falls back to `AUTH_SECRET` |
 | Errors also forwarded to Sentry (not just stderr) | + `SENTRY_DSN` |
+| Download rollups, trending, and admin analytics kept current by cron | + `DATABASE_URL`, `CRON_SECRET` |
 
 Each tier is additive — nothing above it is required to run the tier below it, and
 every route degrades gracefully rather than 500ing when its dependencies aren't

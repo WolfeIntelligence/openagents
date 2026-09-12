@@ -140,6 +140,35 @@ to `ADMIN_EMAIL`, and a status-change notice to a package's owner — see
 See "GitHub auto-sync" in `src/content/docs/publishing.md` for linking a package to
 a repo so a release/tag push republishes it automatically.
 
+## 7. Cron jobs (rollups, cleanup, review reminders)
+
+| Variable | Effect |
+|---|---|
+| `CRON_SECRET` | Bearer token the three `/api/cron/*` routes require (`Authorization: Bearer <CRON_SECRET>`); without it they 401 and never run. |
+
+Vercel's Cron scheduler (configured in `vercel.json`) calls these on a fixed
+schedule and injects `CRON_SECRET` as the bearer token automatically on the hosted
+deployment:
+
+| Route | Schedule |
+|---|---|
+| `POST /api/cron/rollup-downloads` | Daily — aggregates `download_events` into `download_rollups` for the previous UTC day. |
+| `POST /api/cron/cleanup` | Hourly — expires stale rate-limit rows and abandoned checkout artifacts. |
+| `POST /api/cron/review-reminders` | Daily — reminder emails for packages stuck in review/scan-flagged status. |
+
+See `src/content/docs/self-hosting.md#cron-jobs` for the full detail and
+`src/content/docs/api.md#ops` for the request/response shape.
+
+## 8. Running the test suite
+
+```
+npm run test:e2e
+```
+
+Runs the Playwright end-to-end suite (see `docs/E2E.md`) against a locally-built
+app. CI runs the same suite against a **zero-env build** — no database, auth, or
+Stripe configured — so it also verifies the zero-config baseline still works.
+
 ## Commands reference
 
 | command             | purpose                                      |

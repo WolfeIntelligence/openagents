@@ -108,6 +108,14 @@ welcome without prior discussion.
   in [`public/openapi.json`](./public/openapi.json) in the same PR —
   `npx tsx scripts/check-openapi.ts` (also run in CI) fails if a route exists with no
   corresponding OpenAPI path.
+- **Touching UI?** Run `npm run test:e2e` before opening the PR — the Playwright
+  suite (see [`docs/E2E.md`](./docs/E2E.md)) is what CI runs against a zero-env
+  build, and it's the fastest way to catch a broken flow before a reviewer does.
+- The publish-time content scan's rules live in [`src/lib/scan.ts`](./src/lib/scan.ts)
+  (see [Publishing](./src/content/docs/publishing.md#content-scan) for what each
+  rule id catches). A rule flagging something in one of the **seed catalog**
+  packages under `catalog/` is a bug in the rule, not in the package — file it (or
+  fix it) rather than editing the seed package to dodge the flag.
 
 ## Reporting issues
 

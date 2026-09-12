@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "OpenAgents API",
-    "version": "3.0.0",
-    "description": "Every route under /api/v1, plus checkout, the billing portal, the Stripe and GitHub webhooks, and Connect onboarding. Some paths describe target contracts landing alongside this document across two batches — batch 2 (tokens, versions, lifecycle/moderation, reviews, analytics, search facets, tags) and batch 3 (subscriptions, collections, binary files, GitHub auto-sync, durable rate limits, account export/delete, badges/OG/RSS) — see docs/AUDIT-2026-09.md and src/content/docs/api.md for narrative docs and current status. All responses are JSON except tarball/raw-file/badge/OG-image downloads. Every non-2xx response is shaped like Error unless noted otherwise.",
+    "version": "4.0.0",
+    "description": "Every route under /api/v1, plus checkout, the billing portal, the Stripe and GitHub webhooks, Connect onboarding, and the internal cron routes. Some paths describe target contracts landing alongside this document across several batches — batch 2 (tokens, versions, lifecycle/moderation, reviews, analytics, search facets, tags), batch 3 (subscriptions, collections, binary files, GitHub auto-sync, durable rate limits, account export/delete, badges/OG/RSS), and batch 4 (organizations, content scanning and security advisories, version diffs and changelog, refunds, seller validation, cron-driven download rollups and analytics) — see docs/AUDIT-2026-09.md and src/content/docs/api.md for narrative docs and current status. All responses are JSON except tarball/raw-file/badge/OG-image downloads. Every non-2xx response is shaped like Error unless noted otherwise.",
     "license": {
       "name": "MIT"
     }
@@ -78,6 +78,22 @@
     {
       "name": "auth",
       "description": "Auth.js sign-in/callback/session"
+    },
+    {
+      "name": "organizations",
+      "description": "Shared publisher identities with member roles"
+    },
+    {
+      "name": "trust-safety",
+      "description": "Publish-time content scanning and security advisories"
+    },
+    {
+      "name": "refunds",
+      "description": "Buyer-initiated refund requests and seller/admin resolution"
+    },
+    {
+      "name": "ops",
+      "description": "Cron-driven maintenance and platform-wide analytics (internal / admin)"
     }
   ],
   "components": {
@@ -86,13 +102,19 @@
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "oa_<40 hex>",
-        "description": "Personal access token, `Authorization: Bearer oa_<40 hex>`. Scopes: read, publish, star, download. A route that accepts a token also accepts a browser session cookie, which is treated as having every scope."
+        "description": "Personal access token, `Authorization: Bearer oa_<40 hex>`. Scopes: read, publish, star, download, review. A route that accepts a token also accepts a browser session cookie, which is treated as having every scope."
       },
       "sessionCookie": {
         "type": "apiKey",
         "in": "cookie",
         "name": "authjs.session-token",
         "description": "Auth.js v5 session cookie, set after sign-in at /signin. Unrestricted — behaves as every token scope at once."
+      },
+      "cronSecret": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "CRON_SECRET",
+        "description": "Bearer token matching the deployment's CRON_SECRET env var, used only by the internal /api/cron/* routes. Not a user credential — never accepted on any other route."
       }
     },
     "parameters": {
@@ -140,6 +162,44 @@
           "type": "string"
         },
         "description": "A collection's slug, unique per owner."
+      },
+      "orgHandle": {
+        "name": "handle",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        },
+        "description": "An organization's handle."
+      },
+      "userHandle": {
+        "name": "userHandle",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        },
+        "description": "A user handle, e.g. an organization member being removed."
+      },
+      "advisoryId": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "description": "A security advisory's id."
+      },
+      "refundId": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "description": "A refund request's id."
       }
     },
     "schemas": {
@@ -343,7 +403,8 @@
           "stats",
           "featured",
           "source",
-          "updatedAt"
+          "updatedAt",
+          "ownerType"
         ],
         "properties": {
           "id": {
@@ -432,6 +493,14 @@
           "updatedAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "ownerType": {
+            "type": "string",
+            "enum": [
+              "user",
+              "org"
+            ],
+            "description": "Whether `owner` names a user handle or an organization handle."
           }
         }
       },
@@ -506,6 +575,30 @@
               "createdAt": {
                 "type": "string",
                 "format": "date-time"
+              },
+              "advisories": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Advisory"
+                },
+                "description": "Open (non-withdrawn) advisories, newest first."
+              },
+              "verifiedSource": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "repo": {
+                    "type": "string"
+                  },
+                  "ref": {
+                    "type": "string"
+                  },
+                  "lastSyncedAt": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                },
+                "description": "Set once a linked GitHub source has synced at least once."
               }
             }
           }
@@ -681,6 +774,9 @@
           },
           "verifiedPurchase": {
             "type": "boolean"
+          },
+          "helpfulCount": {
+            "type": "integer"
           }
         }
       },
@@ -689,7 +785,9 @@
         "required": [
           "items",
           "average",
-          "count"
+          "count",
+          "total",
+          "histogram"
         ],
         "properties": {
           "items": {
@@ -704,6 +802,30 @@
           },
           "count": {
             "type": "integer"
+          },
+          "total": {
+            "type": "integer"
+          },
+          "histogram": {
+            "type": "object",
+            "description": "Count of reviews at each star rating, independent of sort/limit/offset.",
+            "properties": {
+              "1": {
+                "type": "integer"
+              },
+              "2": {
+                "type": "integer"
+              },
+              "3": {
+                "type": "integer"
+              },
+              "4": {
+                "type": "integer"
+              },
+              "5": {
+                "type": "integer"
+              }
+            }
           }
         }
       },
@@ -1033,6 +1155,440 @@
           "url": {
             "type": "string",
             "description": "Stripe-hosted billing portal session URL; redirect the subscriber here."
+          }
+        }
+      },
+      "Organization": {
+        "type": "object",
+        "required": [
+          "handle",
+          "displayName",
+          "createdAt"
+        ],
+        "properties": {
+          "handle": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "bio": {
+            "type": "string",
+            "nullable": true
+          },
+          "website": {
+            "type": "string",
+            "nullable": true
+          },
+          "avatarUrl": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrganizationMember"
+            }
+          }
+        }
+      },
+      "OrganizationMember": {
+        "type": "object",
+        "required": [
+          "handle",
+          "role"
+        ],
+        "properties": {
+          "handle": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "owner",
+              "admin",
+              "member"
+            ]
+          }
+        }
+      },
+      "Advisory": {
+        "type": "object",
+        "required": [
+          "id",
+          "owner",
+          "name",
+          "severity",
+          "title",
+          "body",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "low",
+              "moderate",
+              "high",
+              "critical"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "affectedVersions": {
+            "type": "string",
+            "nullable": true,
+            "description": "Semver range, e.g. \"<1.3.0\"; null means all versions."
+          },
+          "fixedInVersion": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "withdrawnAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        }
+      },
+      "ScanResult": {
+        "type": "object",
+        "required": [
+          "score",
+          "flags"
+        ],
+        "properties": {
+          "score": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "description": "0 (clean) .. 100 (high risk)."
+          },
+          "flags": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "prompt-injection-override",
+                "hidden-text",
+                "credential-network-combo",
+                "network-unknown-host",
+                "destructive-command",
+                "leaked-secret",
+                "obfuscated-eval"
+              ]
+            }
+          }
+        }
+      },
+      "Diff": {
+        "type": "object",
+        "required": [
+          "from",
+          "to",
+          "files",
+          "summary",
+          "truncated"
+        ],
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "path",
+                "status"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "added",
+                    "removed",
+                    "modified",
+                    "unchanged"
+                  ]
+                },
+                "hunks": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "header": {
+                        "type": "string"
+                      },
+                      "lines": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "context",
+                                "add",
+                                "del"
+                              ]
+                            },
+                            "text": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "summary": {
+            "type": "object",
+            "properties": {
+              "filesChanged": {
+                "type": "integer"
+              },
+              "additions": {
+                "type": "integer"
+              },
+              "deletions": {
+                "type": "integer"
+              }
+            }
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        }
+      },
+      "RefundRequest": {
+        "type": "object",
+        "required": [
+          "id",
+          "purchaseId",
+          "reason",
+          "status",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "purchaseId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "approved",
+              "denied",
+              "refunded"
+            ]
+          },
+          "sellerNote": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "resolvedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        }
+      },
+      "ValidateResult": {
+        "type": "object",
+        "required": [
+          "valid",
+          "manifestIssues",
+          "readmeFindings"
+        ],
+        "properties": {
+          "valid": {
+            "type": "boolean"
+          },
+          "manifestIssues": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "readmeFindings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "rule": {
+                  "type": "string",
+                  "enum": [
+                    "missing-title",
+                    "missing-install-usage",
+                    "missing-example",
+                    "todo-placeholder",
+                    "too-short",
+                    "broken-relative-link",
+                    "missing-tags-runtimes-homepage-hint"
+                  ]
+                },
+                "message": {
+                  "type": "string"
+                },
+                "severity": {
+                  "type": "string",
+                  "enum": [
+                    "error",
+                    "warning"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "Analytics": {
+        "type": "object",
+        "required": [
+          "downloads",
+          "publishes",
+          "revenue",
+          "topPackages",
+          "scanFlags"
+        ],
+        "properties": {
+          "downloads": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "integer"
+              },
+              "byDay": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "day": {
+                      "type": "string"
+                    },
+                    "count": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "publishes": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "integer"
+              },
+              "byDay": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "day": {
+                      "type": "string"
+                    },
+                    "count": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "revenue": {
+            "type": "object",
+            "properties": {
+              "totalCents": {
+                "type": "integer"
+              },
+              "byDay": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "day": {
+                      "type": "string"
+                    },
+                    "amountCents": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "topPackages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "owner": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "downloads": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "scanFlags": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "description": "Count of publishes flagged per rule id, over the window."
           }
         }
       }
@@ -1895,6 +2451,36 @@
           },
           {
             "$ref": "#/components/parameters/name"
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "newest",
+                "rating",
+                "helpful"
+              ],
+              "default": "newest"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 0
+            }
           }
         ],
         "responses": {
@@ -1921,7 +2507,7 @@
           },
           {
             "bearerToken": [
-              "read"
+              "review"
             ]
           }
         ],
@@ -1999,7 +2585,7 @@
           },
           {
             "bearerToken": [
-              "read"
+              "review"
             ]
           }
         ],
@@ -2087,6 +2673,17 @@
               "default": 10,
               "maximum": 50
             }
+          },
+          {
+            "name": "suggest",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            },
+            "description": "Set to 1 for a slim { id, title, kind, ownerType } shape sized for a search-as-you-type dropdown; limit then defaults to 6 (max 10) instead of 10 (max 50)."
           }
         ],
         "responses": {
@@ -2239,8 +2836,12 @@
                       "type": "string",
                       "enum": [
                         "pending",
-                        "live"
+                        "live",
+                        "unlisted"
                       ]
+                    },
+                    "scan": {
+                      "$ref": "#/components/schemas/ScanResult"
                     }
                   }
                 }
@@ -2362,7 +2963,15 @@
                       "type": "string"
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "enum": [
+                        "pending",
+                        "live",
+                        "unlisted"
+                      ]
+                    },
+                    "scan": {
+                      "$ref": "#/components/schemas/ScanResult"
                     }
                   }
                 }
@@ -4402,6 +5011,1612 @@
           },
           "503": {
             "description": "Database not configured"
+          }
+        }
+      }
+    },
+    "/api/v1/orgs": {
+      "get": {
+        "tags": [
+          "organizations"
+        ],
+        "summary": "List organizations, or the caller's own memberships",
+        "parameters": [
+          {
+            "name": "member",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "me"
+              ]
+            },
+            "description": "Set to `me` (session/token required) to list only organizations the caller belongs to."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 24,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Organization"
+                      }
+                    },
+                    "total": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "?member=me without a session/token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "organizations"
+        ],
+        "summary": "Create an organization",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": [
+              "publish"
+            ]
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "handle",
+                  "displayName"
+                ],
+                "properties": {
+                  "handle": {
+                    "type": "string"
+                  },
+                  "displayName": {
+                    "type": "string"
+                  },
+                  "bio": {
+                    "type": "string"
+                  },
+                  "website": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Organization"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or reserved handle",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Handle already taken",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/orgs/{handle}": {
+      "get": {
+        "tags": [
+          "organizations"
+        ],
+        "summary": "Fetch one organization",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/orgHandle"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Organization"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "organizations"
+        ],
+        "summary": "Update an organization",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": [
+              "publish"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/orgHandle"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "displayName": {
+                    "type": "string"
+                  },
+                  "bio": {
+                    "type": "string"
+                  },
+                  "website": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Organization"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an owner/admin member",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "organizations"
+        ],
+        "summary": "Delete an organization",
+        "description": "Owner member only, and only once the organization owns zero packages.",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": [
+              "publish"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/orgHandle"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an owner member",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Organization still owns one or more packages",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/orgs/{handle}/members": {
+      "put": {
+        "tags": [
+          "organizations"
+        ],
+        "summary": "Add a member, or change an existing member's role",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": [
+              "publish"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/orgHandle"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "handle",
+                  "role"
+                ],
+                "properties": {
+                  "handle": {
+                    "type": "string"
+                  },
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "owner",
+                      "admin",
+                      "member"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK — the updated membership list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/OrganizationMember"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`handle` isn't a known user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an owner/admin member",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Organization doesn't exist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/orgs/{handle}/members/{userHandle}": {
+      "delete": {
+        "tags": [
+          "organizations"
+        ],
+        "summary": "Remove a member, or leave",
+        "description": "Owner/admin member to remove someone else; any member can remove themself. The organization's last remaining owner can't leave.",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": [
+              "publish"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/orgHandle"
+          },
+          {
+            "$ref": "#/components/parameters/userHandle"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "400": {
+            "description": "userHandle is the organization's last remaining owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an owner/admin, and not removing self",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Organization doesn't exist, or userHandle isn't a member",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/packages/{owner}/{name}/transfer": {
+      "post": {
+        "tags": [
+          "packages",
+          "organizations"
+        ],
+        "summary": "Transfer a package to another user or organization",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": [
+              "publish"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/owner"
+          },
+          {
+            "$ref": "#/components/parameters/name"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "to"
+                ],
+                "properties": {
+                  "to": {
+                    "type": "string",
+                    "description": "A user or organization handle."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK — the updated package",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Package"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`to` doesn't exist, or names an org the caller isn't an owner/admin member of",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not the current owner/admin, or token missing publish",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Package doesn't exist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/packages/{owner}/{name}/advisories": {
+      "get": {
+        "tags": [
+          "trust-safety"
+        ],
+        "summary": "List open advisories for a package",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/owner"
+          },
+          {
+            "$ref": "#/components/parameters/name"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Advisory"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Package doesn't exist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "trust-safety"
+        ],
+        "summary": "Post a security advisory (admin only)",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/owner"
+          },
+          {
+            "$ref": "#/components/parameters/name"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "severity",
+                  "title",
+                  "body"
+                ],
+                "properties": {
+                  "severity": {
+                    "type": "string",
+                    "enum": [
+                      "low",
+                      "moderate",
+                      "high",
+                      "critical"
+                    ]
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "body": {
+                    "type": "string"
+                  },
+                  "affectedVersions": {
+                    "type": "string"
+                  },
+                  "fixedInVersion": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Advisory"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Package doesn't exist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/packages/{owner}/{name}/advisories/{id}": {
+      "patch": {
+        "tags": [
+          "trust-safety"
+        ],
+        "summary": "Edit or withdraw a security advisory (admin only)",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/owner"
+          },
+          {
+            "$ref": "#/components/parameters/name"
+          },
+          {
+            "$ref": "#/components/parameters/advisoryId"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "severity": {
+                    "type": "string",
+                    "enum": [
+                      "low",
+                      "moderate",
+                      "high",
+                      "critical"
+                    ]
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "body": {
+                    "type": "string"
+                  },
+                  "affectedVersions": {
+                    "type": "string"
+                  },
+                  "fixedInVersion": {
+                    "type": "string"
+                  },
+                  "withdraw": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Advisory"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Package or advisory id doesn't exist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/scans": {
+      "get": {
+        "tags": [
+          "trust-safety",
+          "admin"
+        ],
+        "summary": "Recently-published versions by scan score (admin only)",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "min",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "minimum": 0,
+              "maximum": 100
+            },
+            "description": "Minimum scan score to include."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "owner": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "version": {
+                            "type": "string"
+                          },
+                          "score": {
+                            "type": "integer"
+                          },
+                          "flags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "publishedAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "status": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "total": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/packages/{owner}/{name}/versions/{version}/diff": {
+      "get": {
+        "tags": [
+          "versions"
+        ],
+        "summary": "Per-file diff between two published versions",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/owner"
+          },
+          {
+            "$ref": "#/components/parameters/name"
+          },
+          {
+            "$ref": "#/components/parameters/version"
+          },
+          {
+            "name": "against",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Version to diff against; defaults to the version immediately before {version} in publish order."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Diff"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`against` doesn't name a published version of this package",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Paid package, non-preview file, caller hasn't purchased/doesn't own it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Package, version, or `against` doesn't exist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/validate": {
+      "post": {
+        "tags": [
+          "publish"
+        ],
+        "summary": "Validate package files without publishing",
+        "description": "No authentication required; no side effects. Same `files` shape as POST /api/v1/publish.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "files"
+                ],
+                "properties": {
+                  "files": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "path",
+                        "content"
+                      ],
+                      "properties": {
+                        "path": {
+                          "type": "string"
+                        },
+                        "content": {
+                          "type": "string"
+                        },
+                        "encoding": {
+                          "type": "string",
+                          "enum": [
+                            "utf8",
+                            "base64"
+                          ],
+                          "default": "utf8"
+                        },
+                        "mode": {
+                          "type": "integer",
+                          "enum": [
+                            420,
+                            493
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidateResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/refunds": {
+      "get": {
+        "tags": [
+          "refunds"
+        ],
+        "summary": "List refund requests (as buyer or as seller)",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "mine",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            },
+            "description": "The caller's own requests as a buyer."
+          },
+          {
+            "name": "seller",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            },
+            "description": "Requests against packages the caller owns."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/RefundRequest"
+                      }
+                    },
+                    "total": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "refunds"
+        ],
+        "summary": "Request a refund on a one-time purchase",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": [
+              "download"
+            ]
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "purchaseId",
+                  "reason"
+                ],
+                "properties": {
+                  "purchaseId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefundRequest"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Purchase is a subscription, or is more than 14 days old",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "purchaseId doesn't exist or isn't the caller's",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A refund request already exists for this purchase",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/refunds/{id}": {
+      "post": {
+        "tags": [
+          "refunds"
+        ],
+        "summary": "Approve or deny a refund request",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/refundId"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "action"
+                ],
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "approve",
+                      "deny"
+                    ]
+                  },
+                  "note": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK — the updated refund request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefundRequest"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not the seller and not an admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Refund request doesn't exist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Already resolved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/refunds": {
+      "get": {
+        "tags": [
+          "refunds",
+          "admin"
+        ],
+        "summary": "Every refund request across the platform (admin only)",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "purchaseId": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "owner": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "buyerHandle": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "createdAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "resolvedAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "nullable": true
+                          }
+                        }
+                      }
+                    },
+                    "total": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/analytics": {
+      "get": {
+        "tags": [
+          "ops",
+          "admin"
+        ],
+        "summary": "Platform-wide analytics (admin only)",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 30
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Analytics"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cron/rollup-downloads": {
+      "post": {
+        "tags": [
+          "ops"
+        ],
+        "summary": "Aggregate the prior day's download_events into download_rollups (daily)",
+        "description": "Internal — invoked by Vercel Cron, not intended for direct client calls.",
+        "security": [
+          {
+            "cronSecret": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "processed": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or incorrect bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cron/cleanup": {
+      "post": {
+        "tags": [
+          "ops"
+        ],
+        "summary": "Expire stale rate-limit windows and abandoned checkout artifacts (hourly)",
+        "description": "Internal — invoked by Vercel Cron, not intended for direct client calls.",
+        "security": [
+          {
+            "cronSecret": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "processed": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or incorrect bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cron/review-reminders": {
+      "post": {
+        "tags": [
+          "ops"
+        ],
+        "summary": "Email reminders for packages stuck in review/scan-flagged status (daily)",
+        "description": "Internal — invoked by Vercel Cron, not intended for direct client calls.",
+        "security": [
+          {
+            "cronSecret": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "processed": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or incorrect bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       }
