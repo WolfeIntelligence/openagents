@@ -9,11 +9,31 @@ import { buildShims, nextStepHint } from "../shims.js";
 import { readLockfile, recordInstall } from "../lockfile.js";
 import { buildPlan, formatPlan } from "../resolve.js";
 import { sha256Hex, toIntegrityString, parseIntegrityString, expectedChecksumFromHeaders, verifyChecksum } from "../integrity.js";
+import { satisfies, tryParseRange } from "../semver.js";
 
-export async function run(args) {
+/**
+ * Whether advisory `range` (its `affectedVersions`, e.g. "<1.3.0") covers
+ * `version`. A missing/empty range affects every version; an unparsable one
+ * (most likely a typo when it was posted) fails open — shown/enforced rather
+ * than silently skipped — mirroring `affectsVersion` in
+ * src/lib/advisories.ts server-side.
+ */
+function advisoryAffects(version, range) {
+  if (!range || !String(range).trim()) return true;
+  if (!tryParseRange(range)) return true;
+  return satisfies(version, range);
+}
+
+/**
+ * `installFn` is injectable (default: the real `installPackage` below,
+ * defined in this same module — see update.js for the same pattern) so tests
+ * can exercise the advisory-check/refusal logic above without a real
+ * download+extract pipeline.
+ */
+export async function run(args, { installFn = installPackage } = {}) {
   const ref = args._[0];
   if (!ref) {
-    console.error("✗ usage: openagents add <owner/name[@version|@range]> [--runtime <id>] [--registry <url>] [--dir <path>] [--no-deps]");
+    console.error("✗ usage: openagents add <owner/name[@version|@range]> [--runtime <id>] [--registry <url>] [--dir <path>] [--no-deps] [--force]");
     process.exitCode = 1;
     return;
   }
@@ -55,10 +75,46 @@ export async function run(args) {
   console.log(formatPlan(plan));
   console.log("");
 
+  // Z2: security advisories for the package the user explicitly asked to add
+  // (`plan[0]` is always the root — see buildPlan's doc comment in resolve.js).
+  // Fetched separately from the manifest/plan above since advisories aren't
+  // part of resolve.js's registry contract; this only covers the root, not
+  // transitive dependencies pulled in via `manifest.requires`.
+  const root = plan[0];
+  const force = Boolean(args.force);
+  let advisories = [];
+  try {
+    const res = await util.fetchJson(`${registry}/api/v1/packages/${owner}/${name}/advisories`, { runtime });
+    advisories = Array.isArray(res.items) ? res.items : [];
+  } catch (err) {
+    console.error(`⚠ could not check advisories for ${owner}/${name}: ${err.message}`);
+  }
+
+  const activeForVersion = advisories.filter(
+    (a) => !a.withdrawnAt && advisoryAffects(root.version, a.affectedVersions)
+  );
+  if (activeForVersion.length > 0) {
+    console.log(`Security advisories for ${owner}/${name}@${root.version}:`);
+    for (const a of activeForVersion) {
+      const fixed = a.fixedInVersion ? ` (fixed in v${a.fixedInVersion})` : "";
+      console.log(`  [${a.severity}] ${a.title}${fixed}`);
+    }
+    console.log("");
+  }
+
+  const critical = activeForVersion.filter((a) => a.severity === "critical");
+  if (critical.length > 0 && !force) {
+    console.error(
+      `✗ refusing to install ${owner}/${name}@${root.version}: ${critical.length} critical advisor${critical.length === 1 ? "y" : "ies"} affect${critical.length === 1 ? "s" : ""} this version. Re-run with --force to install anyway.`
+    );
+    process.exitCode = 1;
+    return;
+  }
+
   for (const entry of plan) {
     if (entry.cached) continue;
     const [pOwner, pName] = entry.id.split("/");
-    const ok = await installPackage({
+    const ok = await installFn({
       owner: pOwner,
       name: pName,
       version: entry.version,

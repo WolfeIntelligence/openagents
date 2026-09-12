@@ -8,6 +8,8 @@ import {
   type FormEvent,
   type InputHTMLAttributes,
 } from "react";
+import { ScanReport } from "@/components/ScanReport";
+import type { ScanResult } from "@/lib/scan";
 
 interface UploadedFile {
   path: string;
@@ -30,6 +32,8 @@ interface PublishSuccess {
   url: string;
   /** Absent on responses from a pre-status backend; treated the same as "live". */
   status?: string;
+  /** Absent on responses from a pre-scan backend. */
+  scan?: ScanResult;
 }
 
 type Mode = "directory" | "github";
@@ -151,6 +155,11 @@ export function PublishForm() {
             </Link>
           ) : null}
         </p>
+        {published?.scan && (
+          <div className="mt-4">
+            <ScanReport scan={published.scan} />
+          </div>
+        )}
       </div>
     );
   }
