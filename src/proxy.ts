@@ -53,6 +53,8 @@ export function proxy(request: NextRequest) {
   // per the "How nonces work in Next.js" section of the CSP guide.
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-nonce", nonce);
+  // Lets segment-level not-found pages know which URL was asked for (e.g. to suggest a package).
+  requestHeaders.set("x-pathname", request.nextUrl.pathname);
   requestHeaders.set("Content-Security-Policy", csp);
 
   const response = NextResponse.next({ request: { headers: requestHeaders } });

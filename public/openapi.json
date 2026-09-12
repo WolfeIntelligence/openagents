@@ -3,7 +3,7 @@
   "info": {
     "title": "OpenAgents API",
     "version": "4.0.0",
-    "description": "Every route under /api/v1, plus checkout, the billing portal, the Stripe and GitHub webhooks, Connect onboarding, and the internal cron routes. Some paths describe target contracts landing alongside this document across several batches \u2014 batch 2 (tokens, versions, lifecycle/moderation, reviews, analytics, search facets, tags), batch 3 (subscriptions, collections, binary files, GitHub auto-sync, durable rate limits, account export/delete, badges/OG/RSS), and batch 4 (organizations, content scanning and security advisories, version diffs and changelog, refunds, seller validation, cron-driven download rollups and analytics) \u2014 see docs/AUDIT-2026-09.md and src/content/docs/api.md for narrative docs and current status. All responses are JSON except tarball/raw-file/badge/OG-image downloads. Every non-2xx response is shaped like Error unless noted otherwise.",
+    "description": "Every route under /api/v1, plus checkout, the billing portal, the Stripe and GitHub webhooks, Connect onboarding, and the internal cron routes (bearer CRON_SECRET). Reads are unauthenticated; writes accept a session cookie or a scoped personal access token (Authorization: Bearer oa_...). Rate limits and error shapes are documented per operation.",
     "license": {
       "name": "MIT"
     }
@@ -108,13 +108,13 @@
         "type": "apiKey",
         "in": "cookie",
         "name": "authjs.session-token",
-        "description": "Auth.js v5 session cookie, set after sign-in at /signin. Unrestricted \u2014 behaves as every token scope at once."
+        "description": "Auth.js v5 session cookie, set after sign-in at /signin. Unrestricted — behaves as every token scope at once."
       },
       "cronSecret": {
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "CRON_SECRET",
-        "description": "Bearer token matching the deployment's CRON_SECRET env var, used only by the internal /api/cron/* routes. Not a user credential \u2014 never accepted on any other route."
+        "description": "Bearer token matching the deployment's CRON_SECRET env var, used only by the internal /api/cron/* routes. Not a user credential — never accepted on any other route."
       }
     },
     "parameters": {
@@ -1062,7 +1062,7 @@
           },
           "webhookUrl": {
             "type": "string",
-            "description": "\"/api/webhooks/github/{id}\" \u2014 present on PUT/GET."
+            "description": "\"/api/webhooks/github/{id}\" — present on PUT/GET."
           },
           "secret": {
             "type": "string",
@@ -3048,7 +3048,7 @@
           "tokens"
         ],
         "summary": "Create a token",
-        "description": "Session only \u2014 a token cannot mint another token. Max 20 tokens per user.",
+        "description": "Session only — a token cannot mint another token. Max 20 tokens per user.",
         "security": [
           {
             "sessionCookie": []
@@ -3085,7 +3085,7 @@
         },
         "responses": {
           "201": {
-            "description": "Created \u2014 plaintext token shown once",
+            "description": "Created — plaintext token shown once",
             "content": {
               "application/json": {
                 "schema": {
@@ -5385,7 +5385,7 @@
         },
         "responses": {
           "200": {
-            "description": "OK \u2014 the updated membership list",
+            "description": "OK — the updated membership list",
             "content": {
               "application/json": {
                 "schema": {
@@ -5557,7 +5557,7 @@
         },
         "responses": {
           "200": {
-            "description": "OK \u2014 the updated package",
+            "description": "OK — the updated package",
             "content": {
               "application/json": {
                 "schema": {
@@ -6290,7 +6290,7 @@
         },
         "responses": {
           "200": {
-            "description": "OK \u2014 the updated refund request",
+            "description": "OK — the updated refund request",
             "content": {
               "application/json": {
                 "schema": {
@@ -6495,7 +6495,7 @@
           "ops"
         ],
         "summary": "Aggregate the prior day's download_events into download_rollups (daily)",
-        "description": "Internal \u2014 invoked by Vercel Cron, not intended for direct client calls.",
+        "description": "Internal — invoked by Vercel Cron, not intended for direct client calls.",
         "security": [
           {
             "cronSecret": []
@@ -6539,7 +6539,7 @@
           "ops"
         ],
         "summary": "Expire stale rate-limit windows and abandoned checkout artifacts (hourly)",
-        "description": "Internal \u2014 invoked by Vercel Cron, not intended for direct client calls.",
+        "description": "Internal — invoked by Vercel Cron, not intended for direct client calls.",
         "security": [
           {
             "cronSecret": []
@@ -6583,7 +6583,7 @@
           "ops"
         ],
         "summary": "Email reminders for packages stuck in review/scan-flagged status (daily)",
-        "description": "Internal \u2014 invoked by Vercel Cron, not intended for direct client calls.",
+        "description": "Internal — invoked by Vercel Cron, not intended for direct client calls.",
         "security": [
           {
             "cronSecret": []
@@ -6640,6 +6640,26 @@
           },
           "503": {
             "description": "CRON_SECRET not configured"
+          }
+        }
+      }
+    },
+    "/api/v1": {
+      "get": {
+        "summary": "Bare API prefix — not an endpoint; returns the standard JSON 404 with a pointer to the docs",
+        "tags": [
+          "meta"
+        ],
+        "responses": {
+          "404": {
+            "description": "Always: { error: \"not found; see /docs/api for the endpoint list\" }",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       }

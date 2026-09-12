@@ -14,7 +14,7 @@ packages from the command line. Every request it makes sends
 ```bash
 npx openagents-cli --help
 # or install it globally:
-npm install -g openagents-cli-cli
+npm install -g openagents-cli
 ```
 
 An unrecognized global or command flag is an error (`unknown option: --foo`), not a

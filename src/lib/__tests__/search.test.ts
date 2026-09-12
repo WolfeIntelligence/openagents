@@ -11,6 +11,7 @@ import {
   buildVocabulary,
   correctTerm,
   buildCorrectedQuery,
+  requiredMatches,
 } from "../search";
 
 describe("tokenize", () => {
@@ -256,4 +257,19 @@ describe("correctTerm / buildCorrectedQuery (G-S1 typo tolerance)", () => {
     const result = buildCorrectedQuery(["changelog", "reveiw"], vocabulary);
     assert.equal(result.correctedQuery, "changelog review");
   });
+});
+
+
+test("matchesTerms: long queries only need most terms (over-specified searches keep the best match)", () => {
+  const migrationReview = ["db-migration-review", "Migration Review", "Review a schema migration before it runs", "openagents", "database", "migrations", "review"];
+  // only "migration" is present of the three → not a hit
+  assert.equal(matchesTerms(["sql", "migration", "safety"], migrationReview), false);
+  assert.equal(requiredMatches(1), 1);
+  assert.equal(requiredMatches(2), 2);
+  assert.equal(requiredMatches(3), 2);
+  assert.equal(requiredMatches(5), 3);
+  // two of three terms present → still a hit
+  assert.equal(matchesTerms(["migration", "review", "safety"], migrationReview), true);
+  // only one of three → not a hit
+  assert.equal(matchesTerms(["sql", "safety", "locks"], migrationReview), false);
 });

@@ -249,7 +249,9 @@ function buildWhere(query: CatalogQuery, terms: string[], skip?: FacetDimension)
         )`
       );
     });
-    conditions.push(or(and(...ilikeTerms), tsMatchCondition(query.q)));
+    // OR across terms here; `matchesTerms` (applied to the fetched rows) enforces
+    // the "most terms must match" rule so both catalogs agree.
+    conditions.push(or(or(...ilikeTerms), tsMatchCondition(query.q)));
   }
   return conditions.length ? and(...conditions) : undefined;
 }
@@ -432,7 +434,12 @@ export function createDbCatalog(seed: Catalog): Catalog {
       db ? safe(queryDbSummaries(db, effectiveQuery, effectiveTerms), "list query", []) : Promise.resolve([]),
     ]);
     return {
-      items: mergeSummaries(seedPage.items, dbSummaries),
+      items: mergeSummaries(
+        seedPage.items,
+        effectiveTerms.length > 0
+          ? dbSummaries.filter((p) => matchesTerms(effectiveTerms, fieldsOf(p)))
+          : dbSummaries
+      ),
       // The seed catalog self-corrects typos; surface that so the caller can tell
       // the user what was actually searched for.
       seedCorrectedQuery: seedPage.correctedQuery,

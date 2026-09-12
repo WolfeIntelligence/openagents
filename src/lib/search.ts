@@ -36,6 +36,17 @@ export function escapeLike(s: string): string {
  * "code-review" tag matches the term "review" from `q=code review`) by also
  * comparing the hyphen-to-space form of each field.
  */
+/**
+ * How many of a query's terms must match for a document to count as a hit.
+ * One or two words must all match; longer, over-specified queries ("sql migration
+ * safety") only need most of them, so the best package isn't dropped for lacking
+ * one qualifier — ranking then puts fuller matches first.
+ */
+export function requiredMatches(termCount: number): number {
+  if (termCount <= 2) return termCount;
+  return Math.ceil(termCount * 0.6);
+}
+
 export function matchesTerms(terms: string[], fields: string[]): boolean {
   if (terms.length === 0) return true;
   const normalized: string[] = [];
@@ -47,10 +58,12 @@ export function matchesTerms(terms: string[], fields: string[]): boolean {
   }
   // Terms are lowercased here too (not just trusted to already be, e.g. from
   // `tokenize`) so this stays correct for any caller.
-  return terms.every((term) => {
+  let matched = 0;
+  for (const term of terms) {
     const lower = term.toLowerCase();
-    return normalized.some((field) => field.includes(lower));
-  });
+    if (normalized.some((field) => field.includes(lower))) matched += 1;
+  }
+  return matched >= requiredMatches(terms.length);
 }
 
 /** The subset of `PackageSummary` that ranking needs — kept minimal so this

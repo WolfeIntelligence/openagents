@@ -13,7 +13,7 @@ built-in `fetch`).
 ## Install
 
 ```bash
-npm install -g openagents-cli-cli
+npm install -g openagents-cli
 # or run without installing:
 npx openagents-cli --help
 ```

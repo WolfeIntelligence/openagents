@@ -85,7 +85,11 @@ export default async function PublishPage() {
             <code className="font-mono text-sm text-fg">npx {cliSpec()} publish</code>
             <CopyButton value={`npx ${cliSpec()} publish`} />
           </div>
-          <p className="mt-2 text-xs text-fg-subtle">Coming soon.</p>
+          <p className="mt-2 text-xs text-fg-subtle">
+            Create a token under Settings → API tokens, run <code className="font-mono">npx {cliSpec()} login</code>
+            once, then publish from your package directory. <code className="font-mono">--dry-run</code> checks
+            without uploading; see the <Link href="/docs/cli" className="text-accent hover:text-accent-hover">CLI docs</Link>.
+          </p>
         </section>
 
         <section className="rounded-lg border border-border p-5">
