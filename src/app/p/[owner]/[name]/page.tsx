@@ -35,6 +35,7 @@ import { AddToCollection } from "@/components/AddToCollection";
 import { isPackageOwner } from "@/lib/access";
 import { AdvisoryBanner } from "@/components/AdvisoryBanner";
 import { VerifiedSourceBadge } from "@/components/VerifiedSourceBadge";
+import { RecentlyViewedRecord } from "@/components/RecentlyViewed";
 
 type Params = { owner: string; name: string };
 type TabId = "readme" | "files" | "manifest" | "versions" | "reviews";
@@ -410,6 +411,7 @@ export default async function PackagePage({
           </div>
         </aside>
       </div>
+      <RecentlyViewedRecord owner={owner} name={name} title={manifest.title} kind={manifest.kind} />
     </div>
   );
 }
