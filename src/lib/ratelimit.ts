@@ -248,7 +248,12 @@ const RATE_LIMIT_CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization",
-  "Access-Control-Expose-Headers": "Content-Disposition, Retry-After, ETag, X-Checksum-Sha256",
+  // Z5: X-RateLimit-* joins the list below now that `withRateLimit` sets them
+  // on every 429 — otherwise a cross-origin caller's JS couldn't read them
+  // (browsers hide every response header from cross-origin JS unless it's
+  // explicitly exposed).
+  "Access-Control-Expose-Headers":
+    "Content-Disposition, Retry-After, ETag, X-Checksum-Sha256, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset",
 };
 
 export interface WithRateLimitOptions extends RateLimitOptions {
@@ -258,6 +263,24 @@ export interface WithRateLimitOptions extends RateLimitOptions {
   key?: string;
   /** Message for the 429 body. Defaults to a generic "slow down". */
   message?: string;
+}
+
+/**
+ * `X-RateLimit-*` headers for a `RateLimitResult`, so a caller can see its
+ * budget without parsing the 429 body. `X-RateLimit-Reset` is a Unix timestamp
+ * (seconds) computed from `retryAfterSeconds` — exact on a blocked (`!ok`)
+ * result, since that's exactly how `retryAfterSeconds` itself is derived, but
+ * only ever "now" on an allowed one (`retryAfterSeconds` is 0 there), because
+ * `RateLimitResult` doesn't carry the window's actual start. Fine for
+ * `withRateLimit`'s 429, where this is always exact; a caller that also wants
+ * these on a 200 should treat the reset value as meaningless in that case.
+ */
+export function rateLimitHeaders(result: RateLimitResult, options: RateLimitOptions): Record<string, string> {
+  return {
+    "X-RateLimit-Limit": String(options.limit),
+    "X-RateLimit-Remaining": String(result.remaining),
+    "X-RateLimit-Reset": String(Math.floor(Date.now() / 1000) + result.retryAfterSeconds),
+  };
 }
 
 /**
@@ -287,6 +310,7 @@ export async function withRateLimit(
     headers: {
       "Content-Type": "application/json; charset=utf-8",
       "Retry-After": String(result.retryAfterSeconds),
+      ...rateLimitHeaders(result, limitOptions),
       ...RATE_LIMIT_CORS_HEADERS,
     },
   });

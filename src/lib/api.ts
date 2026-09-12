@@ -9,9 +9,11 @@ export const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization",
   // Browsers hide every response header from cross-origin JS by default
   // unless it's explicitly exposed — the CLI and third-party clients need
-  // these to read a tarball's filename, a rate limit's retry time, and a
-  // cache-validation tag.
-  "Access-Control-Expose-Headers": "Content-Disposition, Retry-After, ETag, X-Checksum-Sha256",
+  // these to read a tarball's filename, a rate limit's retry time/budget, and
+  // a cache-validation tag. The X-RateLimit-* trio is set by
+  // `withRateLimit`/`rateLimitHeaders` in src/lib/ratelimit.ts (Z5).
+  "Access-Control-Expose-Headers":
+    "Content-Disposition, Retry-After, ETag, X-Checksum-Sha256, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset",
 };
 
 /** JSON success response with CORS headers applied. */

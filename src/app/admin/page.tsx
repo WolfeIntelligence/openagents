@@ -170,7 +170,12 @@ export default async function AdminPage() {
 function PageShell({ children }: { children: ReactNode }) {
   return (
     <div className="mx-auto max-w-4xl px-4 py-10 sm:px-6 lg:px-8">
-      <h1 className="text-2xl font-semibold text-fg">Admin</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-2xl font-semibold text-fg">Admin</h1>
+        <Link href="/admin/analytics" className="text-sm text-accent hover:text-accent-hover">
+          Analytics
+        </Link>
+      </div>
       <p className="mt-2 max-w-2xl text-sm text-fg-muted">
         Review queue, reports, and featured packages.
       </p>
