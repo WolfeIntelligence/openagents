@@ -15,7 +15,9 @@
     "db:studio": "drizzle-kit studio",
     "check:catalog": "npx tsx scripts/check-catalog.ts",
     "sync:meta": "npx tsx scripts/sync-catalog-meta.ts",
-    "test": "node scripts/run-tests.mjs"
+    "test": "node scripts/run-tests.mjs",
+    "test:e2e": "playwright test",
+    "test:e2e:install": "playwright install --with-deps chromium"
   },
   "dependencies": {
     "@auth/drizzle-adapter": "^1.11.3",
@@ -34,6 +36,7 @@
     "zod": "^4.5.4"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

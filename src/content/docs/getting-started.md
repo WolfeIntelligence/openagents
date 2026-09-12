@@ -56,8 +56,21 @@ the full install-directory table and how each runtime picks the files up.
   packages someone put together around a theme ("everything for PR review"), each
   with a one-paste "copy install-all" command; see
   [Publishing](/docs/publishing#collections-for-curation).
+- **Organizations**: [`/org/{handle}`](/org) — a shared publisher identity's
+  packages, bio, and website, the same shape as a creator's own profile; see
+  [Publishing](/docs/publishing#organizations).
+- **Changelog**: [`/changelog`](/changelog) (add `?owner=` to scope it to one
+  creator) lists every version published across the catalog, newest first; a given
+  package's own version history and diffs live on its
+  [compare page](#comparing-versions) below. [`/changelog.xml`](/changelog.xml) is
+  the same feed as RSS/Atom.
 - **RSS**: [`/feed.xml`](/feed.xml) for newly published/updated packages, if you'd
   rather watch the catalog from a feed reader than check back on `/explore`.
+- **Keyboard shortcuts**: `/` focuses search from anywhere; `g e` goes to Explore,
+  `g h` home, `g t` Tags, `g c` Collections; `?` shows the full shortcut list.
+- **Recently viewed**: the landing page keeps a "recently viewed" rail of packages
+  you've opened, stored locally in your browser (not synced to your account or
+  visible to anyone else).
 
 Each package's detail page (`/p/<owner>/<name>`) shows its README, full manifest, file
 tree, and version history before you install anything. A creator can also embed
@@ -85,12 +98,24 @@ npx openagents-cli info openagents/pr-reviewer
 npx openagents-cli add openagents/pr-reviewer
 ```
 
+## Comparing versions
+
+Every package's detail page links to a compare view —
+`/p/{owner}/{name}/compare?from=&to=&view=split|unified` — showing a file-by-file
+diff between any two published versions, side-by-side or unified. Useful for
+deciding whether to update, or for a reviewer checking exactly what changed before
+approving a flagged version. See [API Reference](/docs/api#get-apiv1packagesownernameversionsversiondiffagainstw)
+for the underlying diff endpoint.
+
 ## Publish your own
 
 Free packages are contributed via pull request to the `catalog/` directory; packages
 with a price go through the hosted publish flow (or `openagents publish` from the
 CLI, once you've `openagents login`'d — see [CLI Reference](/docs/cli)) and go live
-immediately once validation passes, unless the deployment requires review first. See
+immediately once validation passes, unless the deployment requires review first (or
+the automated content scan flags it — see [Publishing](/docs/publishing#content-scan)).
+A package can be owned by you personally or by an **organization** you're a member
+of — see [Publishing](/docs/publishing#organizations). See
 [Publishing](/docs/publishing) for both paths, review mode, and the content policy.
 
 ## Run OpenAgents yourself

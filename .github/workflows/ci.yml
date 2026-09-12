@@ -89,3 +89,41 @@ jobs:
 
       - name: Smoke test (--help)
         run: node bin/openagents.js --help
+
+  e2e:
+    name: E2E (Playwright, zero-env production server)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # e2e/cli.spec.ts shells out to cli/bin/openagents.js directly (no npm
+      # link/pack needed), but that script still needs its own dependencies
+      # (tar-stream, etc.) installed.
+      - run: npm ci --prefix cli
+
+      - name: Install Playwright's Chromium browser
+        run: npx playwright install --with-deps chromium
+
+      # Same zero-env guarantee as the `site` job's build — see the comment
+      # there. playwright.config.ts's webServer only *starts* `next start`;
+      # it does not build, so this has to happen first.
+      - name: Build with zero env vars
+        run: npx next build
+
+      - name: Run Playwright tests
+        run: npx playwright test
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 14

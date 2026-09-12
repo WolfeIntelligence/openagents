@@ -136,6 +136,16 @@ function PreRenderer({ children }: ComponentPropsWithoutRef<"pre">) {
   return <>{children}</>;
 }
 
+/** Wide GFM tables scroll inside their own box instead of widening the page
+ *  (the README column is ~340px on a phone). */
+function TableRenderer({ children }: ComponentPropsWithoutRef<"table">) {
+  return (
+    <div className="overflow-x-auto">
+      <table>{children}</table>
+    </div>
+  );
+}
+
 export function Markdown({ content, className = "", owner, name }: MarkdownProps) {
   const toc = buildToc(content);
   return (
@@ -149,6 +159,7 @@ export function Markdown({ content, className = "", owner, name }: MarkdownProps
           a: ExternalAwareLink,
           code: CodeRenderer,
           pre: PreRenderer,
+          table: TableRenderer,
         }}
       >
         {content}

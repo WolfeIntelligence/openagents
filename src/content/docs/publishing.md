@@ -49,16 +49,21 @@ and a way to receive payment.
 2. Connect a payout account via **Stripe Connect** — required before a paid package
    can go live, since checkout needs somewhere to send the creator's share of each
    sale.
-3. Submit the files (and an optional changelog) through the `/publish` form,
+3. Before submitting, run the wizard's **Check** step (or call
+   [`POST /api/v1/validate`](#validate-before-publish) directly) to catch manifest
+   and README problems ahead of time — see [Validate before publishing](#validate-before-publish)
+   below.
+4. Submit the files (and an optional changelog) through the `/publish` form,
    programmatically via `POST /api/v1/publish` (see [API Reference](/docs/api)), from
    a public GitHub repo via [`POST /api/v1/publish/import`](#publish-from-github), or
    with `openagents publish` (see [CLI Reference](/docs/cli)) once you've
    `openagents login`'d.
-4. Once validation passes, a **brand-new** package goes live immediately and is
-   purchasable via Stripe Checkout right away — unless this deployment has
-   `REQUIRE_REVIEW=1` set, in which case it's created as `pending` first (see below).
-   Publishing a new **version** of an already-live package is always immediate,
-   regardless of `REQUIRE_REVIEW`.
+5. Every submission runs through the [content scan](#content-scan) before it's
+   accepted. Assuming it isn't flagged, a **brand-new** package goes live
+   immediately and is purchasable via Stripe Checkout right away — unless this
+   deployment has `REQUIRE_REVIEW=1` set, in which case it's created as `pending`
+   first (see below). Publishing a new **version** of an already-live package is
+   always immediate, regardless of `REQUIRE_REVIEW`.
 
 ### Review mode (`REQUIRE_REVIEW=1`)
 
@@ -79,9 +84,110 @@ new version of an existing one) is created with `status: "pending"` instead of
   `ADMIN_HANDLES` env var — see [Self-Hosting](/docs/self-hosting).
 
 Most self-hosted instances (and `openagents-nu.vercel.app`) run without this set —
-packages publish straight to `live`, exactly as described in step 4 above, and
-moderation happens after the fact via [reports](#reporting-issues) instead of before
-publish.
+packages publish straight to `live`, exactly as described above, and moderation
+happens after the fact via [reports](#reporting-issues) instead of before publish.
+
+### Content scan
+
+Independently of `REQUIRE_REVIEW`, every publish (`POST /api/v1/publish`,
+`.../publish/import`, and a GitHub auto-sync run) is scanned for a fixed set of
+risky patterns before the version is accepted. The response's `scan` field
+(`{ score: 0..100, flags: string[] }`) is always returned, whatever the score —
+see [API Reference](/docs/api#content-scan) for the full response shape.
+
+| Rule id | What it catches |
+|---|---|
+| `prompt-injection-override` | Content that tries to override the *installing* agent's system prompt or prior instructions — the core risk of a marketplace whose product is agent instructions. |
+| `hidden-text` | Zero-width characters, base64-looking blobs, or text hidden via markdown/HTML tricks a human reviewer would miss on a skim. |
+| `credential-network-combo` | Reading a credential-shaped file (`.env`, SSH keys, cloud config) combined with a network call in the same file — the shape of an exfiltration attempt. |
+| `network-unknown-host` | A network call to a host outside the manifest's declared `homepage`/`repository` domains or a well-known package registry. |
+| `destructive-command` | Shell commands that delete, force-push, or otherwise irreversibly change state without a guarded confirmation step. |
+| `leaked-secret` | A pattern matching a real-looking API key, token, or connection string committed into the package's own files. |
+| `obfuscated-eval` | Dynamic code execution (`eval`/`exec`-style) fed from an encoded or concatenated string, the classic way to hide what code actually does from a reviewer. |
+
+**If your package is flagged** (`score >= 70`):
+
+- A **brand-new** package is created `pending` — same effect as the
+  `REQUIRE_REVIEW` gate above, visible only to you and admins until approved.
+- A **new version of an already-live package** still publishes, but the whole
+  package flips to `unlisted` pending review — existing installs and direct links
+  keep working, it just drops out of listings/search in the meantime.
+
+Either way, nothing is silently rejected — check the `flags` in the response (or
+`/admin`'s flagged-uploads tab, if you're an admin) against the table above, fix
+the specific thing that tripped the rule, and publish a new version. A genuine
+false positive (the rule matched something legitimate) is a bug — report it per
+[Contributing](https://github.com/WolfeIntelligence/openagents/blob/main/CONTRIBUTING.md#code-contributions);
+the rules themselves live in `src/lib/scan.ts` and are expected to run clean
+against every seed catalog package.
+
+### Security advisories
+
+An admin can post a security advisory against any package — a specific
+vulnerability, a version range it affects, and (once fixed) the version it's fixed
+in. Advisories show up in three places: the package's own detail page, the API
+(`GET /api/v1/packages/{owner}/{name}/advisories`), and the CLI, which prints open
+advisories on `add`/`info` and **refuses to install a `critical`-severity one
+without `--force`**:
+
+```bash
+openagents add someone/flagged-package
+# ✗ critical advisory: <title> — re-run with --force to install anyway
+
+openagents add someone/flagged-package --force
+```
+
+See [API Reference](/docs/api#security-advisories) for the full CRUD (admin-only to
+post/edit/withdraw) and [CLI Reference](/docs/cli#advisories) for the install-time
+behavior. A package's detail response also carries `verifiedSource` — non-null once
+a [linked GitHub source](#github-auto-sync) has synced at least once, so a buyer can
+see the package's published files were sourced from a specific repo/ref rather than
+uploaded by hand.
+
+### Validate before publishing
+
+`POST /api/v1/validate` (no authentication, no side effects) checks a set of files
+the same way `POST /api/v1/publish` would, without actually publishing anything —
+manifest validation (identical checks to `openagents validate`) plus a README
+linter: missing title, no install/usage section, no example invocation, leftover
+`TODO`/`FIXME` placeholders, content that's too short to be useful, broken relative
+links to files not in the submission, and a soft nudge toward filling in
+`tags`/`runtimes`/`homepage` if they're thin. The `/publish` form's **Check** step
+calls this before letting you move on to the actual submission — see
+[API Reference](/docs/api#post-apiv1validate) for the request/response shape.
+
+### Organizations
+
+A package's `owner` can be a **user** handle or an **organization** handle — a
+shared publisher identity with its own members. Create one from
+[`/settings/orgs`](/settings/orgs) or `POST /api/v1/orgs`; each org gets a public
+page at `/org/{handle}` listing its packages, bio, and website, same as a user
+profile.
+
+Membership has three roles:
+
+| Role | Can publish/transfer under the org | Gets paid-download access to what the org owns |
+|---|---|---|
+| `owner` | Yes, plus manage membership and delete the org | Yes |
+| `admin` | Yes | Yes |
+| `member` | No | Yes |
+
+Publishing a package with `owner` set to an org's handle in `openagent.yaml`
+requires `owner` or `admin` membership at publish time — the same check applies to
+[transferring an existing package](#transferring-a-package) to or from an org. The
+last remaining `owner` member can't leave (`DELETE .../members/{userHandle}`
+rejects it) — promote another member to `owner` first, or delete the org outright
+once it owns zero packages. See [API Reference](/docs/api#organizations) for the
+full membership API.
+
+### Transferring a package
+
+`POST /api/v1/packages/{owner}/{name}/transfer` moves a package to a different
+user or organization handle — current owner or admin only, and (when transferring
+*to* an org) requires `owner`/`admin` membership there. Purchases, reviews, and
+stats move with the package; anything referencing the old `owner/name` (an install
+command, a bookmarked URL) 404s afterward, the same as any other owner-handle
+change. See [API Reference](/docs/api#post-apiv1packagesownernametransfer).
 
 ### Publish from GitHub
 
@@ -108,6 +214,31 @@ OpenAgents takes a **10% platform fee** (`PLATFORM_FEE_BPS = 1000` basis points,
 configurable per-deployment by whoever runs the instance — a self-host can change this
 env var) from each sale; the remainder is transferred to the creator's connected
 Stripe account. The fee is disclosed on the checkout page before purchase.
+
+### Refunds
+
+A buyer can request a refund on a one-time purchase within **14 days** of buying it
+(`POST /api/v1/refunds` — subscriptions are canceled instead, not refunded through
+this flow; see [Subscriptions](#subscriptions)). As the seller, you approve or deny
+each request against your own packages:
+
+```bash
+curl "https://openagents-nu.vercel.app/api/v1/refunds?seller=1" -H "Cookie: <session cookie>"
+
+curl -X POST "https://openagents-nu.vercel.app/api/v1/refunds/<id>" \
+  -H "Cookie: <session cookie>" -H "Content-Type: application/json" \
+  -d '{"action": "approve"}'
+```
+
+Approving issues a **full** Stripe refund to the buyer and reverses the Connect
+transfer — you don't keep the fee-adjusted portion, and OpenAgents refunds its
+platform fee too, so nobody is left holding part of a sale that got unwound.
+Denying requires a `note` explaining why to the buyer; either action is final —
+there's no re-opening a resolved request. An admin can also resolve a request on
+your behalf if it goes unanswered (`/admin`'s refunds view,
+`GET /api/v1/admin/refunds`). See [API Reference](/docs/api#refunds) for the full
+request/response shapes, and [`/refund-policy`](/refund-policy) for the
+buyer-facing explanation of the window and rules.
 
 ### Content policy
 

@@ -95,6 +95,8 @@ export interface Package {
     trending?: number;
   };
   featured: boolean;
+  /** Whether `owner` is a user handle or an organization handle; absent means user. */
+  ownerType?: "user" | "org";
   status: PackageStatus;
   /** Present when `status` is "deprecated". */
   deprecation?: { message?: string; replacementId?: string };
@@ -106,7 +108,7 @@ export interface Package {
 /** Lightweight listing card. */
 export type PackageSummary = Pick<
   Package,
-  "id" | "owner" | "name" | "stats" | "featured" | "status" | "deprecation" | "source" | "updatedAt"
+  "id" | "owner" | "name" | "stats" | "featured" | "ownerType" | "status" | "deprecation" | "source" | "updatedAt"
 > & {
   title: string;
   summary: string;
@@ -222,6 +224,7 @@ export function toSummary(p: Package): PackageSummary {
     license: m.license,
     stats: p.stats,
     featured: p.featured,
+    ownerType: p.ownerType,
     status: p.status,
     deprecation: p.deprecation,
     source: p.source,

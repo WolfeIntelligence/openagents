@@ -72,6 +72,7 @@ or `outdated` check can tell a re-download apart from a tampered one.
 | `--registry <url>` | Registry base URL. Defaults to `OPENAGENTS_REGISTRY` or `https://openagents-nu.vercel.app`. |
 | `--dir <path>` | Project root to install into. Defaults to the current directory. |
 | `--no-deps` | Skip `requires` resolution — install only the named package. |
+| `--force` | Install despite an open `critical`-severity advisory (see **Advisories** below). |
 | `--json` | Print the result as JSON instead of human-readable text. |
 
 Under the hood: `GET /api/v1/packages/{owner}/{name}/versions` to resolve a range to
@@ -89,6 +90,33 @@ If the package is paid and you haven't purchased it, `add` fails with the server
 so you can buy it in the browser: buying from the CLI itself isn't supported yet. If
 you're signed in (`openagents login`) and the package is paid, the download request
 carries your token so a purchase you already made is honored.
+
+### Advisories
+
+Before installing, `add` fetches
+[`GET .../advisories`](/docs/api#security-advisories) for the package (and every
+resolved dependency) and prints any open ones:
+
+```
+⚠ moderate advisory on openagents/pr-reviewer: outdated regex allows a crafted
+  diff to skip review — fixed in 1.3.1
+```
+
+A `critical`-severity advisory **blocks the install** unless `--force` is passed:
+
+```bash
+openagents add someone/flagged-package
+# ✗ critical advisory: <title> (see <package-url>#advisories) — re-run with --force to install anyway
+
+openagents add someone/flagged-package --force
+```
+
+`openagents info <owner/name>` also prints open advisories (without the
+install-time block) so you can check before deciding to add something.
+
+| Flag | Description |
+|---|---|
+| `--force` | Install despite an open `critical` advisory. Has no effect (and prints nothing extra) when there's no critical advisory to override. |
 
 ## `openagents outdated`
 

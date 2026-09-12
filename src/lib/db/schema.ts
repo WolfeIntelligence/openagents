@@ -147,6 +147,8 @@ export const packages = pgTable(
     entry: text("entry").notNull(),
     featured: boolean("featured").notNull().default(false),
     latestVersion: text("latestVersion").notNull(),
+    /** Whether `owner` names a user handle or an organization handle. */
+    ownerType: text("ownerType").notNull().default("user"), // user | org
     // Lifecycle: pending (awaiting review, owner-only) | live | unlisted (hidden from
     // listings/search, still installable by URL) | deprecated (listed with a banner).
     status: text("status").notNull().default("live"),
@@ -183,6 +185,9 @@ export const packageVersions = pgTable(
     manifest: jsonb("manifest").notNull(),
     readme: text("readme").notNull().default(""),
     changelog: text("changelog"),
+    /** Publish-time content scan: 0 (clean) .. 100, and the matched rule ids. */
+    riskScore: integer("riskScore").notNull().default(0),
+    scanFlags: jsonb("scanFlags").$type<string[]>().notNull().default([]),
     publishedAt: timestamp("publishedAt", { mode: "date" }).notNull().defaultNow(),
   },
   // A version is immutable once published: the same version string can never be
@@ -430,4 +435,83 @@ export const packageSources = pgTable(
     createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
   },
   (t) => [unique("package_sources_package_unique").on(t.owner, t.name)]
+);
+
+// ---------------------------------------------------------------------------
+// Batch-4 tables: organizations, security advisories, refund requests, rollups.
+// ---------------------------------------------------------------------------
+
+/** A shared publisher identity. `handle` shares the namespace with user handles
+ *  (packages.owner is a handle either way; `packages.ownerType` says which). */
+export const organizations = pgTable("organizations", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  handle: text("handle").notNull().unique(),
+  displayName: text("displayName").notNull(),
+  bio: text("bio"),
+  website: text("website"),
+  avatarUrl: text("avatarUrl"),
+  createdByUserId: text("createdByUserId").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
+});
+
+export const organizationMembers = pgTable(
+  "organization_members",
+  {
+    orgId: uuid("orgId")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    userId: text("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    role: text("role").notNull().default("member"), // owner | admin | member
+    createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.orgId, t.userId] })]
+);
+
+/** Admin-posted security advisories. Shown on the package page, in the API, and
+ *  by the CLI at install time while not withdrawn. */
+export const advisories = pgTable("advisories", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  owner: text("owner").notNull(),
+  name: text("name").notNull(),
+  severity: text("severity").notNull(), // low | moderate | high | critical
+  title: text("title").notNull(),
+  body: text("body").notNull(),
+  /** semver range of affected versions, e.g. "<1.3.0"; null = all. */
+  affectedVersions: text("affectedVersions"),
+  fixedInVersion: text("fixedInVersion"),
+  createdByUserId: text("createdByUserId").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
+  withdrawnAt: timestamp("withdrawnAt", { mode: "date" }),
+});
+
+export const refundRequests = pgTable("refund_requests", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  purchaseId: uuid("purchaseId")
+    .notNull()
+    .references(() => purchases.id, { onDelete: "cascade" }),
+  userId: text("userId")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  reason: text("reason").notNull(),
+  status: text("status").notNull().default("open"), // open | approved | denied | refunded
+  sellerNote: text("sellerNote"),
+  createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
+  resolvedAt: timestamp("resolvedAt", { mode: "date" }),
+});
+
+/** Daily aggregates of download_events, written by the nightly cron so dashboards
+ *  and trending sorts stop scanning raw events as they grow. */
+export const downloadRollups = pgTable(
+  "download_rollups",
+  {
+    owner: text("owner").notNull(),
+    name: text("name").notNull(),
+    day: text("day").notNull(), // YYYY-MM-DD UTC
+    count: integer("count").notNull().default(0),
+    byRuntime: jsonb("byRuntime").$type<Record<string, number>>().notNull().default({}),
+    byVersion: jsonb("byVersion").$type<Record<string, number>>().notNull().default({}),
+  },
+  (t) => [primaryKey({ columns: [t.owner, t.name, t.day] })]
 );

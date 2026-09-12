@@ -6,6 +6,9 @@ import {
   computeAverage,
   clampReviewsLimit,
   clampReviewsOffset,
+  normalizeReviewSort,
+  reviewsHasMore,
+  buildRatingHistogram,
   MAX_REVIEW_BODY_LENGTH,
   DEFAULT_REVIEWS_PAGE_SIZE,
   MAX_REVIEWS_PAGE_SIZE,
@@ -97,6 +100,56 @@ test("clampReviewsOffset: passes through valid non-negative integers", () => {
   assert.equal(clampReviewsOffset(20), 20);
   assert.equal(clampReviewsOffset("40"), 40);
   assert.equal(clampReviewsOffset(5.9), 5);
+});
+
+// ---------------------------------------------------------------------------
+// Sort normalization (Z3)
+// ---------------------------------------------------------------------------
+
+test("normalizeReviewSort: passes through recognized values", () => {
+  assert.equal(normalizeReviewSort("rating"), "rating");
+  assert.equal(normalizeReviewSort("helpful"), "helpful");
+  assert.equal(normalizeReviewSort("newest"), "newest");
+});
+
+test("normalizeReviewSort: defaults to newest for anything else", () => {
+  assert.equal(normalizeReviewSort(undefined), "newest");
+  assert.equal(normalizeReviewSort(null), "newest");
+  assert.equal(normalizeReviewSort("bogus"), "newest");
+  assert.equal(normalizeReviewSort(42), "newest");
+});
+
+// ---------------------------------------------------------------------------
+// "Load more" pagination math (Z3)
+// ---------------------------------------------------------------------------
+
+test("reviewsHasMore: true when the page just fetched didn't reach the end", () => {
+  assert.equal(reviewsHasMore(0, 20, 45), true);
+  assert.equal(reviewsHasMore(20, 20, 45), true);
+});
+
+test("reviewsHasMore: false when the fetched page reaches or exceeds the total", () => {
+  assert.equal(reviewsHasMore(40, 20, 45), false);
+  assert.equal(reviewsHasMore(0, 20, 20), false);
+  assert.equal(reviewsHasMore(0, 20, 0), false);
+});
+
+// ---------------------------------------------------------------------------
+// Rating histogram (Z3)
+// ---------------------------------------------------------------------------
+
+test("buildRatingHistogram: counts each star rating, all five keys always present", () => {
+  const histogram = buildRatingHistogram([5, 5, 4, 3, 3, 3, 1]);
+  assert.deepEqual(histogram, { 1: 1, 2: 0, 3: 3, 4: 1, 5: 2 });
+});
+
+test("buildRatingHistogram: empty input is all zeros", () => {
+  assert.deepEqual(buildRatingHistogram([]), { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 });
+});
+
+test("buildRatingHistogram: ignores out-of-range or non-integer values", () => {
+  const histogram = buildRatingHistogram([0, 6, 3.5, -1, 5]);
+  assert.deepEqual(histogram, { 1: 0, 2: 0, 3: 0, 4: 0, 5: 1 });
 });
 
 // ---------------------------------------------------------------------------

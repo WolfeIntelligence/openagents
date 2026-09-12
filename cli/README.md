@@ -89,6 +89,29 @@ A generated shim is never silently overwritten once you've edited it: if the
 shim that would be written differs from what's already on disk, `add` leaves
 it alone and prints a note.
 
+#### Advisories
+
+Before installing, `add` fetches any open security advisories for the package
+(and every resolved dependency) from the registry and prints them:
+
+```
+⚠ moderate advisory on openagents/pr-reviewer: outdated regex allows a crafted
+  diff to skip review — fixed in 1.3.1
+```
+
+A `critical`-severity advisory blocks the install unless `--force` is passed:
+
+```bash
+openagents add someone/flagged-package
+# ✗ critical advisory: <title> — re-run with --force to install anyway
+
+openagents add someone/flagged-package --force
+```
+
+`--force` has no effect (and prints nothing extra) when there's no open critical
+advisory to override. `openagents info <owner/name>` also prints open advisories,
+without the install-time block, so you can check before deciding to add something.
+
 ### `openagents list`
 
 ```bash

@@ -10,6 +10,14 @@ import { isGreater, SemverError } from "@/lib/semver";
 import { isReservedHandle } from "@/lib/reserved";
 import { MAX_BINARY_BYTES } from "@/lib/files";
 import { invalidateCatalogCache } from "@/lib/catalog/cache";
+import { getMemberRole } from "@/lib/orgs";
+import { scanPackage, type ScanResult } from "@/lib/scan";
+
+/** New packages at or above this score are held for review regardless of
+ *  `REQUIRE_REVIEW`; an existing package's new version at or above it goes out
+ *  `unlisted` pending review rather than blocking the publish outright (the
+ *  version itself is still recorded — see the `existing` branch below). */
+const HIGH_RISK_THRESHOLD = 70;
 
 export interface PublishFile {
   path: string;
@@ -37,6 +45,10 @@ export interface PublishResult {
   url: string;
   /** The package's lifecycle status after this publish (see `packages.status`). */
   status: string;
+  /** Publish-time content scan of this version's files (Z2) — surfaced so
+   *  `PublishForm` can show the findings, and to explain a "pending"/"unlisted"
+   *  status the scan itself is why. */
+  scan: ScanResult;
 }
 
 /** Thrown for any publish failure; `status` is the HTTP status the route should return. */
@@ -207,10 +219,23 @@ export async function publishPackage({ userHandle, files, changelog }: PublishAr
     throw new PublishError(400, [err instanceof Error ? err.message : String(err)]);
   }
 
+  // G-P3: manifest.owner may name the caller's own handle (ownerType "user", the
+  // original rule) or an organization the caller is a member of with role owner or
+  // admin (ownerType "org", org members with role "member" can't publish — see
+  // access.ts's isPackageOwner doc comment for why that split). Org membership is
+  // keyed by userId, not handle, so the caller's id is looked up from `userHandle`
+  // first — this keeps `PublishArgs` unchanged (every existing caller only ever had
+  // the handle on hand) rather than threading a new field through every call site.
+  let ownerType: "user" | "org" = "user";
   if (manifest.owner !== userHandle) {
-    throw new PublishError(400, [
-      `manifest owner "${manifest.owner}" does not match your handle "${userHandle}"`,
-    ]);
+    const [caller] = await db.select({ id: users.id }).from(users).where(eq(users.handle, userHandle)).limit(1);
+    const role = caller ? await getMemberRole(manifest.owner, caller.id) : null;
+    if (role !== "owner" && role !== "admin") {
+      throw new PublishError(400, [
+        `manifest owner "${manifest.owner}" does not match your handle "${userHandle}", and you're not an owner/admin of that organization`,
+      ]);
+    }
+    ownerType = "org";
   }
 
   // Defense-in-depth: handle derivation (auth.ts) already keeps reserved words and seed
@@ -251,6 +276,14 @@ export async function publishPackage({ userHandle, files, changelog }: PublishAr
   );
   if (fileErrors.length) throw new PublishError(400, fileErrors);
 
+  // Z2: scan the actual bytes being published (not the manifest) for prompt
+  // injection, hidden/invisible manipulation, secret exfiltration, destructive
+  // commands, and leaked credentials. Runs unconditionally — even a package
+  // that ends up "live" gets its score/flags recorded, so the admin "Flagged
+  // uploads" list can surface a mid-risk upload nobody had to gate on.
+  const scan = scanPackage(files);
+  const isHighRisk = scan.score >= HIGH_RISK_THRESHOLD;
+
   const readmeFile = files.find((f) => f.path.toLowerCase() === "readme.md");
 
   // Resolve the changelog: an explicit field wins (trimmed, capped); otherwise fall back
@@ -282,6 +315,7 @@ export async function publishPackage({ userHandle, files, changelog }: PublishAr
     currency: manifest.pricing.currency,
     entry: manifest.entry,
     latestVersion: manifest.version,
+    ownerType,
   };
 
   // neon-http has no transactions; these run sequentially and are accepted as such.
@@ -324,18 +358,23 @@ export async function publishPackage({ userHandle, files, changelog }: PublishAr
   if (existing) {
     // Updates never touch status: a re-publish of an already-live (or already-pending,
     // already-unlisted...) package shouldn't silently change its moderation state —
-    // only the review queue (or REQUIRE_REVIEW at initial creation) does that.
+    // only the review queue (or REQUIRE_REVIEW at initial creation) does that. The one
+    // exception (Z2): a high-risk new version unlists the whole package pending review,
+    // even if it was live a moment ago — the version is still recorded (below), it's
+    // just not the thing shoppers see while an admin looks at what got flagged.
     packageId = existing.id;
-    resultStatus = existing.status;
+    resultStatus = isHighRisk ? "unlisted" : existing.status;
     await db
       .update(packages)
-      .set({ ...packageValues, updatedAt: new Date() })
+      .set({ ...packageValues, updatedAt: new Date(), ...(isHighRisk ? { status: "unlisted" } : {}) })
       .where(eq(packages.id, packageId));
   } else {
     // G-T1/S9 follow-on: when review is required, a brand-new package starts hidden
     // from listings/search until an admin approves it (see `packages.status` doc
-    // comment in schema.ts) rather than going live immediately.
-    const initialStatus = process.env.REQUIRE_REVIEW === "1" ? "pending" : "live";
+    // comment in schema.ts) rather than going live immediately. Z2: a high-risk scan
+    // forces the same "pending" outcome regardless of REQUIRE_REVIEW — score alone is
+    // reason enough to hold a brand-new package for review.
+    const initialStatus = process.env.REQUIRE_REVIEW === "1" || isHighRisk ? "pending" : "live";
     const [row] = await db
       .insert(packages)
       .values({ owner: manifest.owner, name: manifest.name, ...packageValues, status: initialStatus })
@@ -354,6 +393,11 @@ export async function publishPackage({ userHandle, files, changelog }: PublishAr
         manifest,
         readme: readmeFile?.content ?? "",
         changelog: resolvedChangelog,
+        riskScore: scan.score,
+        // The matched rule ids (deduped), not the full flag objects — the full
+        // detail (path/line/excerpt/message) is derivable by re-scanning the
+        // stored files and isn't worth duplicating into the row.
+        scanFlags: Array.from(new Set(scan.flags.map((f) => f.id))),
       })
       .returning({ id: packageVersions.id });
   } catch (err) {
@@ -387,5 +431,6 @@ export async function publishPackage({ userHandle, files, changelog }: PublishAr
     version: manifest.version,
     url: `/p/${manifest.owner}/${manifest.name}`,
     status: resultStatus,
+    scan,
   };
 }

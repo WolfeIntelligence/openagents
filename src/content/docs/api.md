@@ -36,10 +36,11 @@ token). Each token carries a subset of scopes:
 
 | Scope | Grants |
 |---|---|
-| `read` | Anything a `GET` already allows unauthenticated, plus reading your own reviews/tokens/profile. |
+| `read` | Anything a `GET` already allows unauthenticated, plus reading your own tokens/profile. |
 | `publish` | `POST /api/v1/publish`, `POST /api/v1/publish/import`, and `POST /api/v1/packages/{owner}/{name}/status`. |
 | `star` | `POST /api/v1/packages/{owner}/{name}/star`. |
 | `download` | Downloading a **paid** package you've purchased or own — free downloads never require a scope. |
+| `review` | `PUT/DELETE /api/v1/packages/{owner}/{name}/reviews` — writing or removing your own star rating/review. |
 
 A session is unrestricted (equivalent to holding every scope). A token missing the
 scope a route requires gets `403 Forbidden`, not `401` — the token is valid, it's just
@@ -90,6 +91,7 @@ curl "https://openagents-nu.vercel.app/api/v1/packages?kind=workflow&price=free&
     featured: boolean;
     source: "seed" | "db";
     status: "pending" | "live" | "unlisted" | "deprecated";
+    ownerType: "user" | "org"; // whether `owner` names a user handle or an organization handle
     updatedAt: string; // ISO date
   }>;
   total: number;
@@ -130,6 +132,7 @@ curl "https://openagents-nu.vercel.app/api/v1/packages/openagents/pr-reviewer"
 {
   id: "openagents/pr-reviewer";
   owner: "openagents";
+  ownerType: "user" | "org";       // whether `owner` names a user handle or an organization handle
   name: "pr-reviewer";
   manifest: Manifest;              // full parsed openagent.yaml, camelCase
   readme: string;                  // README.md contents, markdown
@@ -141,6 +144,8 @@ curl "https://openagents-nu.vercel.app/api/v1/packages/openagents/pr-reviewer"
   stats: { downloads: number; stars: number; ratingAverage: number | null; ratingCount: number };
   featured: boolean;
   source: "seed" | "db";
+  advisories: Advisory[];          // open (non-withdrawn) advisories, newest first — see Trust & Safety
+  verifiedSource: { repo: string; ref: string; lastSyncedAt: string } | null; // set once a linked GitHub source (see GitHub auto-sync) has synced at least once
   createdAt: string;
   updatedAt: string;
 }
@@ -183,6 +188,52 @@ curl "https://openagents-nu.vercel.app/api/v1/packages/openagents/pr-reviewer/ve
 
 - `404 Not Found` — the package doesn't exist, or that exact version was never
   published.
+
+## `GET /api/v1/packages/{owner}/{name}/versions/{version}/diff?against={w}`
+
+Compare two published versions file-by-file — what powers the compare page
+([`/p/{owner}/{name}/compare`](#compare-page-and-changelog) below).
+
+```bash
+curl "https://openagents-nu.vercel.app/api/v1/packages/openagents/pr-reviewer/versions/1.2.0/diff?against=1.1.0"
+```
+
+```ts
+// 200 OK
+{
+  from: string;   // `against`
+  to: string;     // the {version} path segment
+  files: Array<{
+    path: string;
+    status: "added" | "removed" | "modified" | "unchanged";
+    hunks?: Array<{ header: string; lines: Array<{ type: "context" | "add" | "del"; text: string }> }>;
+    // omitted entirely for a paid package's non-preview file the caller can't read (see 402 below)
+  }>;
+  summary: { filesChanged: number; additions: number; deletions: number };
+  truncated: boolean; // true if one or more files were too large to diff and were skipped
+}
+
+// 400 Bad Request — `against` doesn't name a published version of this package
+// 402 Payment Required — the package is paid, `against` or {version} touches a
+// file other than README.md/openagent.yaml, and the caller hasn't purchased/doesn't
+// own it — same rule as the raw file route
+// 404 Not Found — the package, {version}, or `against` doesn't exist
+```
+
+`against` defaults to the version immediately before `{version}` in publish order
+when omitted. Binary files are reported with `status` only (no `hunks`) since a
+byte-level diff isn't meaningful to render.
+
+### Compare page and changelog
+
+[`/p/{owner}/{name}/compare?from=&to=&view=split|unified`](/p) renders the diff
+above as a page — `view` toggles a side-by-side vs. unified rendering, both driven
+by the same `GET .../diff` response. Site-wide, [`/changelog`](/changelog) (optionally
+`?owner=` to scope to one creator) lists every version published across the catalog,
+newest first, each entry showing its `changelog` text; [`/changelog.xml`](/changelog.xml)
+is the same feed as RSS/Atom, separate from `/feed.xml` (see
+[Sharing & SEO](#sharing--seo) below — that feed is new/updated *packages*, not
+every version).
 
 ## `GET /api/v1/packages/{owner}/{name}/versions/{version}/download`
 
@@ -291,8 +342,11 @@ curl "https://openagents-nu.vercel.app/api/v1/packages/openagents/pr-reviewer/st
 Star ratings with an optional written review. One review per user per package;
 `PUT` upserts. Package owners can't review their own package.
 
+**Query parameters** (GET, all optional): `sort` (`newest` (default) \|
+`rating` \| `helpful`), `limit` (default `20`, max `100`), `offset`.
+
 ```bash
-curl "https://openagents-nu.vercel.app/api/v1/packages/openagents/pr-reviewer/reviews"
+curl "https://openagents-nu.vercel.app/api/v1/packages/openagents/pr-reviewer/reviews?sort=rating&limit=10"
 
 curl -X PUT "https://openagents-nu.vercel.app/api/v1/packages/openagents/pr-reviewer/reviews" \
   -H "Authorization: Bearer oa_..." -H "Content-Type: application/json" \
@@ -310,9 +364,12 @@ curl -X PUT "https://openagents-nu.vercel.app/api/v1/packages/openagents/pr-revi
     createdAt: string;
     updatedAt: string;
     verifiedPurchase: boolean; // true iff this user has a paid purchase of this package
+    helpfulCount: number;
   }>;
+  total: number;
   average: number | null;  // null when count is 0
   count: number;
+  histogram: { 1: number; 2: number; 3: number; 4: number; 5: number }; // count of reviews at each star rating
 }
 
 // PUT — 200 OK, the caller's created/updated review
@@ -321,9 +378,14 @@ curl -X PUT "https://openagents-nu.vercel.app/api/v1/packages/openagents/pr-revi
 // DELETE — 204 No Content
 
 // 400 Bad Request — rating outside 1..5
-// 401 Unauthorized — PUT/DELETE without a session or `read`-scoped token
+// 401 Unauthorized — PUT/DELETE without a session or a token carrying the `review` scope
 // 403 Forbidden — the caller owns this package
 ```
+
+`sort=helpful` orders by `helpfulCount` descending (ties broken newest-first);
+`rating` orders highest-star-first. The rating histogram is always the full
+per-package distribution, independent of `sort`/`limit`/`offset` — a client renders
+it once alongside a paginated list.
 
 A package's `ratingAverage`/`ratingCount` (visible on its summary and detail
 responses) are recomputed from this table on every write — they're derived data, not
@@ -358,6 +420,35 @@ admin queue ([`POST /api/v1/admin/packages/{owner}/{name}`](#post-apiv1adminpack
 not this route. Deleting is permanent and only allowed with **zero** purchases ever
 recorded against the package; a package with purchase history should be `unlisted` or
 `deprecated` instead, so buyers keep access.
+
+## `POST /api/v1/packages/{owner}/{name}/transfer`
+
+Transfer a package to a different owner — a user handle, or an organization the
+caller is an `owner`/`admin` member of. Current owner or admin only.
+
+```bash
+curl -X POST "https://openagents-nu.vercel.app/api/v1/packages/me/my-package/transfer" \
+  -H "Authorization: Bearer oa_..." -H "Content-Type: application/json" \
+  -d '{"to": "my-org"}'
+```
+
+```ts
+// Body
+{ to: string } // a user or organization handle
+
+// 200 OK — the updated package, with `owner`/`ownerType` reflecting the new owner
+// 400 Bad Request — `to` doesn't exist, or names an organization the caller isn't
+//                    an owner/admin member of
+// 401 Unauthorized / 403 Forbidden — not the current owner/admin, or token missing `publish`
+// 404 Not Found — package doesn't exist
+```
+
+Transferring to an organization requires the caller hold `owner` or `admin`
+membership there (see [Organizations](#organizations) below) — publishing and
+transferring under an org are gated the same way. Existing purchases, reviews, and
+stats move with the package; nothing about `owner/name` history is rewritten, so
+old install commands referencing the previous owner will 404 once the transfer
+completes (the same as any other owner-handle change).
 
 ## `POST /api/v1/packages/{owner}/{name}/report`
 
@@ -597,6 +688,124 @@ curl -X DELETE "https://openagents-nu.vercel.app/api/v1/account" \
 This mirrors the package-deletion rule (`POST /api/v1/packages/{owner}/{name}/status`
 with `{"action": "delete"}`): once money has moved, the row sticks around so buyers
 and sellers keep their history.
+
+## Organizations
+
+A shared publisher identity: a `handle` (in the same namespace as user handles —
+`packages.owner` is a handle either way, `packages.ownerType` says whether it's a
+user or an org) with its own display name, bio, and website, owned and managed by
+one or more members. See [Publishing](/docs/publishing#organizations) for the
+membership/roles model.
+
+### `POST /api/v1/orgs`
+
+Create an organization. The creator becomes its first `owner` member. Session or a
+token with the `publish` scope.
+
+```bash
+curl -X POST "https://openagents-nu.vercel.app/api/v1/orgs" \
+  -H "Cookie: <session cookie>" -H "Content-Type: application/json" \
+  -d '{"handle": "acme-agents", "displayName": "Acme Agents", "bio": "We build PR review workflows."}'
+```
+
+```ts
+// Body
+{ handle: string; displayName: string; bio?: string; website?: string }
+
+// 201 Created
+{ handle: string; displayName: string; bio?: string; website?: string; avatarUrl?: string; createdAt: string }
+
+// 400 Bad Request — `handle` fails the same format check as a user handle (`^[a-z0-9-]{2,64}$`), or is reserved
+// 401 Unauthorized
+// 409 Conflict — `handle` is already taken (by a user or another organization — they share one namespace)
+```
+
+### `GET /api/v1/orgs?member=me`
+
+List organizations. With no query, lists public org profiles (paginated,
+`limit`/`offset`); `?member=me` (session/token required) lists only organizations
+the caller belongs to, including their role.
+
+```bash
+curl "https://openagents-nu.vercel.app/api/v1/orgs?member=me" -H "Cookie: <session cookie>"
+```
+
+```ts
+// 200 OK
+{
+  items: Array<{
+    handle: string; displayName: string; bio?: string; website?: string; avatarUrl?: string;
+    role?: "owner" | "admin" | "member"; // present only when ?member=me
+  }>;
+  total: number;
+}
+
+// 401 Unauthorized — `?member=me` without a session/token
+```
+
+### `GET/PATCH/DELETE /api/v1/orgs/{handle}`
+
+Fetch, update, or delete one organization.
+
+```bash
+curl -X PATCH "https://openagents-nu.vercel.app/api/v1/orgs/acme-agents" \
+  -H "Cookie: <session cookie>" -H "Content-Type: application/json" \
+  -d '{"bio": "PR review and release-notes workflows."}'
+```
+
+```ts
+// GET — 200 OK
+{ handle: string; displayName: string; bio?: string; website?: string; avatarUrl?: string; createdAt: string; members: Array<{ handle: string; name: string | null; role: "owner" | "admin" | "member" }> }
+// 404 Not Found
+
+// PATCH — body: { displayName?: string; bio?: string; website?: string } — owner/admin member only
+// 200 OK — the updated organization
+
+// DELETE — owner member only, and only once the org owns zero packages
+// 204 No Content
+// 409 Conflict — the org still owns one or more packages; transfer or delete those first
+```
+
+### `PUT /api/v1/orgs/{handle}/members {handle, role}`
+
+Add a member, or change an existing member's role. Owner/admin member only.
+
+```bash
+curl -X PUT "https://openagents-nu.vercel.app/api/v1/orgs/acme-agents/members" \
+  -H "Cookie: <session cookie>" -H "Content-Type: application/json" \
+  -d '{"handle": "zach", "role": "admin"}'
+```
+
+```ts
+// Body
+{ handle: string; role: "owner" | "admin" | "member" }
+
+// 200 OK — the updated membership list, same shape as GET /api/v1/orgs/{handle}'s `members`
+// 400 Bad Request — `handle` isn't a known user
+// 401 Unauthorized / 403 Forbidden — not an owner/admin member
+// 404 Not Found — org doesn't exist
+```
+
+### `DELETE /api/v1/orgs/{handle}/members/{userHandle}`
+
+Remove a member (or leave, for your own handle). Owner/admin member only to remove
+someone else; any member can remove themself.
+
+```ts
+// 204 No Content
+// 400 Bad Request — `userHandle` is the org's last remaining owner ("last owner cannot leave" —
+//                    promote another member to owner first)
+// 401 Unauthorized / 403 Forbidden — not an owner/admin, and not removing self
+// 404 Not Found — org doesn't exist, or `userHandle` isn't a member
+```
+
+Publishing a package under an organization (`owner` in `openagent.yaml` set to the
+org's handle) requires `owner` or `admin` membership at publish time — a plain
+`member` can install and use the org's packages and gets paid-download access to
+anything the org has purchased, but can't publish or transfer packages on its
+behalf. See [`POST /api/v1/packages/{owner}/{name}/transfer`](#post-apiv1packagesownernametransfer)
+to move an existing package to/from an org, and `/org/{handle}` / `/settings/orgs`
+for the web UI.
 
 ## Collections
 
@@ -1017,7 +1226,13 @@ without you setting them by hand.
 
 ```ts
 // 201 Created
-{ id: "me/my-package", version: "1.0.0", url: "/p/me/my-package", status: "live" | "pending" }
+{
+  id: "me/my-package";
+  version: "1.0.0";
+  url: "/p/me/my-package";
+  status: "live" | "pending" | "unlisted";
+  scan: { score: number; flags: string[] }; // content scan result — see Trust & Safety below
+}
 
 // 400 Bad Request — validation failed
 { error: string, issues: string[] }
@@ -1029,7 +1244,13 @@ invisible to everyone but its owner and admins until approved from `/admin` (see
 [Publishing](/docs/publishing)). Publishing a new version of an already-`live` package
 always comes back `"live"` immediately, regardless of `REQUIRE_REVIEW` — the review
 gate is about letting a new, unvetted package onto the platform, not re-reviewing
-every update from an already-trusted publisher.
+every update from an already-trusted publisher. Independently of `REQUIRE_REVIEW`,
+every publish also runs the content scan described in
+[Trust & Safety](#trust--safety) below: a `scan.score` of 70 or higher makes a
+**brand-new** package start `pending` (same visibility as the review-mode case
+above) or makes a **new version of an existing package** flip the whole package to
+`unlisted` pending manual review — either way, `status` in this response reflects
+the outcome.
 
 `400` covers: manifest validation errors (same checks as `openagents validate`), the
 manifest's `owner` not matching the authenticated user's handle,
@@ -1091,6 +1312,312 @@ curl -X POST "https://openagents-nu.vercel.app/api/v1/publish/import" \
 Only public repositories are supported — there's no GitHub App/OAuth flow for private
 repo access.
 
+## Trust & Safety
+
+### Content scan
+
+Every publish (`POST /api/v1/publish`, `.../publish/import`, and a GitHub auto-sync
+run) scans the submitted files against a fixed set of rules before the version is
+accepted, and returns the result as `PublishResult.scan`:
+
+```ts
+type ScanResult = {
+  score: number;    // 0 (clean) .. 100 (high risk)
+  flags: string[];  // matched rule ids, e.g. ["prompt-injection-override", "network-unknown-host"]
+};
+```
+
+| Rule id | Flags on |
+|---|---|
+| `prompt-injection-override` | Instructions attempting to override the installing agent's system prompt or prior instructions. |
+| `hidden-text` | Zero-width characters, suspiciously-encoded (base64-looking) blobs, or text hidden via markdown/HTML tricks. |
+| `credential-network-combo` | Reading credential-shaped files (`.env`, SSH keys, cloud config) combined with making a network call in the same file. |
+| `network-unknown-host` | A network call to a host not in the manifest's declared `homepage`/`repository` domains or a well-known package registry. |
+| `destructive-command` | Shell commands that delete, force-push, or otherwise irreversibly modify state without a guarded confirmation step. |
+| `leaked-secret` | A pattern matching a real-looking API key, token, or connection string. |
+| `obfuscated-eval` | `eval`/`exec`-style dynamic code execution fed from an encoded or concatenated string. |
+
+`score >= 70`:
+- **Brand-new package** (first-ever version): created `pending` instead of `live`
+  (same visibility as the `REQUIRE_REVIEW` gate — owner/admin only until approved).
+- **New version of an existing, already-`live` package**: the version still
+  publishes, but the **package** is flipped to `unlisted` pending manual review —
+  existing installs and direct links keep working, it just drops out of
+  listings/search until an admin clears it.
+
+A publisher sees the full `scan` result in the publish response regardless of
+score; a false positive is appealable the same way a rejected/unlisted package is —
+fix the flagged content (or, if it's a genuine false positive, report it — see
+[Contributing](https://github.com/WolfeIntelligence/openagents/blob/main/CONTRIBUTING.md))
+and publish a new version.
+
+### `GET /api/v1/admin/scans?min=`
+
+Recently-published versions with a scan score at or above `min` (default `0`, i.e.
+everything scanned). Admin only — this is the moderation view at
+[`/admin`](/admin)'s flagged-uploads tab.
+
+```bash
+curl "https://openagents-nu.vercel.app/api/v1/admin/scans?min=70" -H "Cookie: <session cookie>"
+```
+
+```ts
+// 200 OK
+{ items: Array<{ owner: string; name: string; version: string; score: number; flags: string[]; publishedAt: string; status: string }>; total: number }
+
+// 401 Unauthorized / 403 Forbidden — same as the other admin routes
+```
+
+### Security advisories
+
+Admin-posted advisories against a specific package, optionally scoped to a version
+range, shown on the package page, in the API, and by the CLI at install time while
+not withdrawn.
+
+```ts
+type Advisory = {
+  id: string;
+  owner: string;
+  name: string;
+  severity: "low" | "moderate" | "high" | "critical";
+  title: string;
+  body: string;
+  affectedVersions: string | null; // semver range, e.g. "<1.3.0"; null = all versions
+  fixedInVersion: string | null;
+  createdAt: string;
+  withdrawnAt: string | null;
+};
+```
+
+#### `GET /api/v1/packages/{owner}/{name}/advisories`
+
+```bash
+curl "https://openagents-nu.vercel.app/api/v1/packages/openagents/pr-reviewer/advisories"
+```
+
+```ts
+// 200 OK
+{ items: Advisory[] } // non-withdrawn only, newest first
+
+// 404 Not Found — package doesn't exist
+```
+
+#### `POST /api/v1/packages/{owner}/{name}/advisories`
+
+Post a new advisory. Admin only.
+
+```ts
+// Body
+{ severity: "low" | "moderate" | "high" | "critical"; title: string; body: string; affectedVersions?: string; fixedInVersion?: string }
+
+// 201 Created — the new Advisory
+// 401 Unauthorized / 403 Forbidden — not an admin
+// 404 Not Found — package doesn't exist
+```
+
+#### `PATCH /api/v1/packages/{owner}/{name}/advisories/{id}`
+
+Edit an advisory, or withdraw it (`{"withdraw": true}`). Admin only.
+
+```ts
+// Body — any subset of the POST body fields, or:
+{ withdraw: true }
+
+// 200 OK — the updated Advisory
+// 401 Unauthorized / 403 Forbidden — not an admin
+// 404 Not Found — package or advisory id doesn't exist
+```
+
+A package's detail response (`GET /api/v1/packages/{owner}/{name}`) carries
+`advisories: Advisory[]` (non-withdrawn only) and `verifiedSource` (non-null once a
+[linked GitHub source](#github-auto-sync) has synced at least once) — see
+[Packages](#get-apiv1packagesownername) above. `openagents add`/`info` print open
+advisories, and refuse to install a `critical`-severity one without `--force` — see
+[CLI Reference](/docs/cli#advisories).
+
+## Refunds
+
+One-time purchases only (a subscription is canceled instead — see
+[Subscriptions](/docs/publishing#subscriptions)), within a **14-day** window of
+purchase.
+
+### `POST /api/v1/refunds`
+
+Request a refund. Session or a token with the `download` scope (refunds are scoped
+to something you bought, same trust boundary as a paid download).
+
+```bash
+curl -X POST "https://openagents-nu.vercel.app/api/v1/refunds" \
+  -H "Cookie: <session cookie>" -H "Content-Type: application/json" \
+  -d '{"purchaseId": "...", "reason": "Does not do what the README describes."}'
+```
+
+```ts
+// Body
+{ purchaseId: string; reason: string }
+
+// 201 Created
+{ id: string; purchaseId: string; status: "open"; reason: string; createdAt: string }
+
+// 400 Bad Request — purchase is a subscription, or is more than 14 days old
+// 401 Unauthorized
+// 404 Not Found — `purchaseId` doesn't exist or isn't the caller's
+// 409 Conflict — a refund request already exists for this purchase
+```
+
+### `GET /api/v1/refunds?mine=1|seller=1`
+
+List refund requests. `?mine=1` — the caller's own, as a buyer. `?seller=1` — refund
+requests against packages the caller owns, as a seller. Session only.
+
+```ts
+// 200 OK
+{ items: Array<{ id: string; purchaseId: string; reason: string; status: "open" | "approved" | "denied" | "refunded"; sellerNote?: string; createdAt: string; resolvedAt?: string }>; total: number }
+
+// 401 Unauthorized
+```
+
+### `POST /api/v1/refunds/{id} {action: approve|deny, note?}`
+
+Resolve a refund request. The purchase's seller, or an admin.
+
+```bash
+curl -X POST "https://openagents-nu.vercel.app/api/v1/refunds/<id>" \
+  -H "Cookie: <session cookie>" -H "Content-Type: application/json" \
+  -d '{"action": "approve"}'
+```
+
+```ts
+// Body
+{ action: "approve" | "deny"; note?: string }
+
+// 200 OK — the updated refund request
+// 401 Unauthorized / 403 Forbidden — not the seller and not an admin
+// 404 Not Found — refund request doesn't exist
+// 409 Conflict — already resolved
+```
+
+Approving issues a **full Stripe refund** and reverses the Connect transfer,
+refunding the platform's application fee along with the seller's share — the buyer
+gets their money back in full, and the seller doesn't keep the fee-adjusted portion
+either. Access to the package is revoked the same way it is for a `charge.refunded`
+webhook event (see [`POST /api/webhooks/stripe`](#post-apiwebhooksstripe)).
+
+### `GET /api/v1/admin/refunds`
+
+Every refund request across the platform. Admin only.
+
+```ts
+// 200 OK
+{ items: Array<{ id: string; purchaseId: string; owner: string; name: string; buyerHandle: string; reason: string; status: string; createdAt: string; resolvedAt?: string }>; total: number }
+
+// 401 Unauthorized / 403 Forbidden
+```
+
+See [`/refund-policy`](/refund-policy) for the buyer-facing explanation of the
+14-day window and one-time-purchase-only rule.
+
+## Seller onboarding
+
+### `POST /api/v1/validate`
+
+Validate a set of package files before publishing — no authentication required, no
+side effects. What the `/publish` wizard's **Check** step and a pre-flight linter
+call before a creator commits to submitting.
+
+```bash
+curl -X POST "https://openagents-nu.vercel.app/api/v1/validate" \
+  -H "Content-Type: application/json" \
+  -d '{"files": [{"path": "openagent.yaml", "content": "schema: 1\n..."}, {"path": "README.md", "content": "# ...\n"}]}'
+```
+
+```ts
+// Body — same `files` shape as POST /api/v1/publish
+{ files: Array<{ path: string; content: string; encoding?: "utf8" | "base64"; mode?: number }> }
+
+// 200 OK
+type ValidateResult = {
+  valid: boolean;
+  manifestIssues: string[]; // same checks as `openagents validate` / POST /api/v1/publish
+  readmeFindings: Array<{ rule: string; message: string; severity: "error" | "warning" }>;
+};
+```
+
+README lint rules (each a `rule` id in `readmeFindings`): `missing-title` (no `#`
+heading), `missing-install-usage` (no install/usage section), `missing-example` (no
+example invocation), `todo-placeholder` (`TODO`/`TBD`/`FIXME` left in), `too-short`
+(under a minimum length for genuinely useful content), `broken-relative-link` (a
+markdown link to a file not in the submitted `files`), and
+`missing-tags-runtimes-homepage-hint` (a soft warning nudging toward filling in
+optional manifest fields that improve discoverability). Only `manifestIssues` block
+an actual publish; `readmeFindings` are advisory (shown in the wizard, don't fail
+`POST /api/v1/publish`) except where a finding's `severity` is `"error"`.
+
+## Ops
+
+### Cron jobs
+
+Three Vercel Cron routes, each authorized by a bearer token matching `CRON_SECRET`
+(`Authorization: Bearer <CRON_SECRET>`) rather than a user session or personal
+access token — see [Self-Hosting](/docs/self-hosting#cron-jobs).
+
+| Route | Schedule | Does |
+|---|---|---|
+| `POST /api/cron/rollup-downloads` | Daily | Aggregates the prior UTC day's `download_events` into `download_rollups` (per package/day, with per-runtime and per-version breakdowns) — feeds `/dashboard` and `sort=trending` without scanning raw events as they grow. |
+| `POST /api/cron/cleanup` | Hourly | Housekeeping: expires stale rate-limit windows, prunes unconfirmed/abandoned checkout artifacts, and similar. |
+| `POST /api/cron/review-reminders` | Daily | Emails a reminder (via `src/lib/notify.ts`) for packages that have sat in the pending-review or scan-flagged queue past a threshold. |
+
+```ts
+// 200 OK
+{ ok: true, processed: number }
+
+// 401 Unauthorized — missing/incorrect bearer token
+```
+
+These aren't meant for direct client calls — Vercel's Cron scheduler invokes them
+per `vercel.json`'s `crons` config, with `CRON_SECRET` injected as the bearer token
+automatically on the hosted deployment.
+
+### `GET /api/v1/admin/analytics?days=`
+
+Platform-wide analytics (not scoped to one seller) powering
+[`/admin/analytics`](/admin/analytics). Admin only.
+
+```bash
+curl "https://openagents-nu.vercel.app/api/v1/admin/analytics?days=30" -H "Cookie: <session cookie>"
+```
+
+```ts
+type Analytics = {
+  downloads: { total: number; byDay: Array<{ day: string; count: number }> };
+  publishes: { total: number; byDay: Array<{ day: string; count: number }> };
+  revenue: { totalCents: number; byDay: Array<{ day: string; amountCents: number }> };
+  topPackages: Array<{ owner: string; name: string; downloads: number }>;
+  scanFlags: Record<string, number>; // count of publishes flagged per rule id, over the window
+};
+
+// 200 OK — Analytics
+// 401 Unauthorized / 403 Forbidden — not an admin
+```
+
+`days` is optional, defaults to `30`, backed by `download_rollups` (see **Cron
+jobs** above) rather than scanning raw events.
+
+### Search suggestions
+
+`GET /api/v1/search?suggest=1&limit=6` returns a slim shape for a header's
+search-as-you-type dropdown instead of the full search response:
+
+```ts
+// 200 OK — with ?suggest=1
+{ items: Array<{ id: string; title: string; kind: "workflow" | "harness" | "rules" | "skill"; ownerType: "user" | "org" }> }
+```
+
+`limit` defaults to `6` and maxes at `10` when `suggest=1` (independent of the
+normal search endpoint's `limit` default/max — a suggest dropdown needs far fewer
+results, faster). Without `suggest=1`, `GET /api/v1/search` behaves exactly as
+documented [above](#get-apiv1search).
+
 ## Error shape
 
 Non-2xx responses across all endpoints return:
@@ -1121,7 +1648,13 @@ a fixed window per `"<route>:<client>"` key) so a limit holds across every
 serverless instance, not just the one that happened to handle a given request — a
 deployment without `DATABASE_URL` configured falls back to the same in-memory,
 per-instance limiter as before (best-effort, resets on cold start). A `429` response
-always carries a `Retry-After` header (seconds).
+always carries a `Retry-After` header (seconds), plus:
+
+| Header | Meaning |
+|---|---|
+| `X-RateLimit-Limit` | The window's total request budget for this route/client. |
+| `X-RateLimit-Remaining` | Requests left in the current window (`0` on the response that got `429`d). |
+| `X-RateLimit-Reset` | Unix timestamp (seconds) when the window resets and `Remaining` goes back to `Limit`. |
 
 | Route | Limit |
 |---|---|
@@ -1131,6 +1664,8 @@ always carries a `Retry-After` header (seconds).
 | `.../report` | 3/hour anonymous, 10/hour signed-in — anonymous reporting stays open (see [Publishing](/docs/publishing#content-policy)), just tightly capped, since it's the one unauthenticated write route most exposed to spam. |
 | `POST /api/v1/tokens` | 10 requests/minute |
 | `POST /api/v1/publish`, `POST /api/v1/publish/import`, `.../source/sync` | 10 requests/minute |
+| `POST /api/v1/validate` | 30 requests/minute/IP — unauthenticated, so capped tighter than the authenticated publish routes above |
+| `POST /api/v1/refunds` | 10 requests/minute |
 | `POST /api/checkout` | 10 requests/minute |
 
 ## Content-Security-Policy

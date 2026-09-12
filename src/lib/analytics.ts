@@ -11,9 +11,10 @@
 // with zero env vars: every function no-ops without DATABASE_URL.
 
 import { createHash } from "node:crypto";
-import { and, eq, gte, sql } from "drizzle-orm";
+import { and, eq, gte, lt, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
-import { downloadEvents } from "@/lib/db/schema";
+import { downloadEvents, downloadRollups } from "@/lib/db/schema";
+import { rollupDayRange } from "@/lib/rollups";
 
 export interface DownloadEventInput {
   owner: string;
@@ -89,22 +90,60 @@ export function fillDailySeries(rows: DailyCount[], days: number, end: Date = ne
   return series;
 }
 
-/** Unique downloads per UTC day for one package over the last `days` days. */
+type Db = NonNullable<ReturnType<typeof getDb>>;
+
+/**
+ * Unique downloads per UTC day for one package over the last `days` days.
+ *
+ * Z5: reads `download_rollups` for every day before today (the nightly cron
+ * keeps those current, see src/lib/rollups.ts) and `download_events` directly
+ * for today only, since today's rollup doesn't exist yet. Falls back to
+ * scanning `download_events` for the whole window when there's no rollup data
+ * in range at all — an empty/not-yet-populated rollup table (a fresh
+ * deployment, or the cron hasn't run yet) must never make this look like zero
+ * downloads.
+ */
 export async function downloadsByDay(owner: string, name: string, days = 30): Promise<DailyCount[]> {
   const db = getDb();
   if (!db) return [];
+  const today = utcDay();
   const since = utcDay(new Date(Date.now() - days * 86_400_000));
   try {
-    const rows = await db
+    const [rollupRows, todayRows] = await Promise.all([
+      db
+        .select({ day: downloadRollups.day, count: downloadRollups.count })
+        .from(downloadRollups)
+        .where(and(eq(downloadRollups.owner, owner), eq(downloadRollups.name, name), rollupDayRange(since, today)))
+        .orderBy(downloadRollups.day),
+      todayDownloadCount(db, owner, name, today),
+    ]);
+
+    if (rollupRows.length > 0) return [...rollupRows, ...todayRows];
+
+    const fallbackRows = await db
       .select({ day: downloadEvents.day, count: sql<number>`count(*)::int` })
       .from(downloadEvents)
-      .where(and(eq(downloadEvents.owner, owner), eq(downloadEvents.name, name), gte(downloadEvents.day, since)))
+      .where(
+        and(eq(downloadEvents.owner, owner), eq(downloadEvents.name, name), gte(downloadEvents.day, since), lt(downloadEvents.day, today))
+      )
       .groupBy(downloadEvents.day)
       .orderBy(downloadEvents.day);
-    return rows;
+    return [...fallbackRows, ...todayRows];
   } catch {
     return [];
   }
+}
+
+/** Today's raw `download_events` count for one package, shaped like a
+ *  single-element `DailyCount[]` (empty when there were none) — shared by
+ *  `downloadsByDay`'s rollup and fallback paths, since today is never in
+ *  `download_rollups` either way. */
+async function todayDownloadCount(db: Db, owner: string, name: string, today: string): Promise<DailyCount[]> {
+  return db
+    .select({ day: downloadEvents.day, count: sql<number>`count(*)::int` })
+    .from(downloadEvents)
+    .where(and(eq(downloadEvents.owner, owner), eq(downloadEvents.name, name), eq(downloadEvents.day, today)))
+    .groupBy(downloadEvents.day);
 }
 
 export interface KeyedCount {
@@ -112,7 +151,16 @@ export interface KeyedCount {
   count: number;
 }
 
-/** Unique downloads grouped by `version` or `runtime` (null runtime → "unknown"). */
+/**
+ * Unique downloads grouped by `version` or `runtime` (null runtime → "unknown")
+ * over the last `days` days.
+ *
+ * Z5: merges `download_rollups`' `byVersion`/`byRuntime` jsonb maps (for days
+ * before today) with today's raw `download_events`, grouped by the same
+ * dimension. Falls back to scanning `download_events` for the whole window
+ * when no rollup row in range carries any data for this package — same
+ * empty-table safety net as `downloadsByDay`.
+ */
 export async function downloadsBy(
   owner: string,
   name: string,
@@ -121,17 +169,110 @@ export async function downloadsBy(
 ): Promise<KeyedCount[]> {
   const db = getDb();
   if (!db) return [];
+  const today = utcDay();
   const since = utcDay(new Date(Date.now() - days * 86_400_000));
   const column = dimension === "version" ? downloadEvents.version : downloadEvents.runtime;
+  const rollupColumn = dimension === "version" ? downloadRollups.byVersion : downloadRollups.byRuntime;
   try {
-    const rows = await db
-      .select({ key: sql<string>`coalesce(${column}, 'unknown')`, count: sql<number>`count(*)::int` })
-      .from(downloadEvents)
-      .where(and(eq(downloadEvents.owner, owner), eq(downloadEvents.name, name), gte(downloadEvents.day, since)))
-      .groupBy(sql`coalesce(${column}, 'unknown')`)
-      .orderBy(sql`count(*) desc`);
-    return rows;
+    const [rollupRows, todayRows] = await Promise.all([
+      db
+        .select({ map: rollupColumn })
+        .from(downloadRollups)
+        .where(and(eq(downloadRollups.owner, owner), eq(downloadRollups.name, name), rollupDayRange(since, today))),
+      db
+        .select({ key: sql<string>`coalesce(${column}, 'unknown')`, count: sql<number>`count(*)::int` })
+        .from(downloadEvents)
+        .where(and(eq(downloadEvents.owner, owner), eq(downloadEvents.name, name), eq(downloadEvents.day, today)))
+        .groupBy(sql`coalesce(${column}, 'unknown')`),
+    ]);
+
+    const merged = new Map<string, number>();
+    let hasRollupData = false;
+    for (const row of rollupRows) {
+      for (const [key, count] of Object.entries(row.map ?? {})) {
+        hasRollupData = true;
+        merged.set(key, (merged.get(key) ?? 0) + count);
+      }
+    }
+
+    if (!hasRollupData) {
+      const fallbackRows = await db
+        .select({ key: sql<string>`coalesce(${column}, 'unknown')`, count: sql<number>`count(*)::int` })
+        .from(downloadEvents)
+        .where(
+          and(
+            eq(downloadEvents.owner, owner),
+            eq(downloadEvents.name, name),
+            gte(downloadEvents.day, since),
+            lt(downloadEvents.day, today)
+          )
+        )
+        .groupBy(sql`coalesce(${column}, 'unknown')`);
+      for (const row of fallbackRows) merged.set(row.key, (merged.get(row.key) ?? 0) + row.count);
+    }
+
+    for (const row of todayRows) merged.set(row.key, (merged.get(row.key) ?? 0) + row.count);
+
+    return Array.from(merged.entries())
+      .map(([key, count]) => ({ key, count }))
+      .sort((a, b) => b.count - a.count);
   } catch {
     return [];
+  }
+}
+
+export interface SiteDownloadTotals {
+  /** Unique-client-day installs across every package over the trailing 7 days. */
+  installsLast7: number;
+  /** Same, over the trailing 30 days. */
+  installsLast30: number;
+}
+
+/** Site-wide install count for one trailing window, merging `download_rollups`
+ *  (days before today) with today's raw events — same strategy as
+ *  `downloadsByDay`/`downloadsBy`, just summed across every package instead of
+ *  scoped to one. Falls back to scanning `download_events` directly when the
+ *  rollup table has no rows in range yet. */
+async function windowInstalls(db: Db, since: string, today: string): Promise<number> {
+  const [rollup, todayCount] = await Promise.all([
+    db
+      .select({ total: sql<number>`coalesce(sum(${downloadRollups.count}), 0)::int`, rows: sql<number>`count(*)::int` })
+      .from(downloadRollups)
+      .where(rollupDayRange(since, today))
+      .then((r) => r[0] ?? { total: 0, rows: 0 }),
+    db
+      .select({ total: sql<number>`count(*)::int` })
+      .from(downloadEvents)
+      .where(eq(downloadEvents.day, today))
+      .then((r) => r[0]?.total ?? 0),
+  ]);
+
+  if (rollup.rows > 0) return rollup.total + todayCount;
+
+  const fallback = await db
+    .select({ total: sql<number>`count(*)::int` })
+    .from(downloadEvents)
+    .where(and(gte(downloadEvents.day, since), lt(downloadEvents.day, today)))
+    .then((r) => r[0]?.total ?? 0);
+  return fallback + todayCount;
+}
+
+/**
+ * Site-wide install totals for the admin analytics dashboard (Z5): unique
+ * client-days across every package, last 7 and last 30 days. Zero for both
+ * when the database is off or either query fails.
+ */
+export async function siteTotals(): Promise<SiteDownloadTotals> {
+  const db = getDb();
+  if (!db) return { installsLast7: 0, installsLast30: 0 };
+  const today = utcDay();
+  try {
+    const [installsLast7, installsLast30] = await Promise.all([
+      windowInstalls(db, utcDay(new Date(Date.now() - 7 * 86_400_000)), today),
+      windowInstalls(db, utcDay(new Date(Date.now() - 30 * 86_400_000)), today),
+    ]);
+    return { installsLast7, installsLast30 };
+  } catch {
+    return { installsLast7: 0, installsLast30: 0 };
   }
 }

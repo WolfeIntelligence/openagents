@@ -11,6 +11,8 @@ import { ConnectStripeButton } from "@/components/ConnectStripeButton";
 import { formatPrice } from "@/lib/format";
 import { PurchaseStatusBadge } from "@/components/PurchaseStatusBadge";
 import { OpenStripeDashboardButton } from "./OpenStripeDashboardButton";
+import { listRefundRequestsForSeller } from "@/lib/refunds";
+import { RefundRequestsPanel } from "@/components/RefundRequestsPanel";
 
 export const metadata: Metadata = {
   title: "Payouts",
@@ -127,6 +129,8 @@ export default async function PayoutsPage({ searchParams }: PayoutsPageProps) {
 
   const refundsCount = sales.filter((s) => s.status === "refunded").length;
 
+  const refundRequests = user.handle ? await listRefundRequestsForSeller(user.handle) : [];
+
   return (
     <PageShell>
       {connected === "1" && user.stripeOnboarded && (
@@ -203,6 +207,20 @@ export default async function PayoutsPage({ searchParams }: PayoutsPageProps) {
             </div>
           </>
         )}
+      </div>
+
+      <div className="mt-10">
+        <h2 className="text-lg font-semibold text-fg">Refund requests</h2>
+        <p className="mt-1 text-sm text-fg-muted">
+          Buyers can request a refund within {" "}
+          <Link href="/refund-policy" className="text-accent hover:text-accent-hover">
+            the refund window
+          </Link>
+          . Approving refunds the full purchase price, including the platform fee.
+        </p>
+        <div className="mt-4">
+          <RefundRequestsPanel requests={refundRequests} />
+        </div>
       </div>
 
       <div className="mt-10 border-t border-border pt-6">

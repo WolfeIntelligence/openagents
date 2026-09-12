@@ -16,6 +16,7 @@
 import type { Session } from "next-auth";
 import type { Package } from "@/lib/types";
 import { hasPurchased } from "@/lib/purchases";
+import { getMemberRole } from "@/lib/orgs";
 
 /**
  * Paths on a paid package that stay readable without a purchase — enough to
@@ -27,6 +28,71 @@ export const PREVIEW_PATHS = new Set<string>(["README.md", "openagent.yaml"]);
 
 export function isFreePackage(pkg: Package): boolean {
   return pkg.manifest.pricing.model === "free" || pkg.manifest.pricing.amountCents === 0;
+}
+
+/** The minimal shape `isPackageOwner` needs — deliberately narrower than the
+ *  full `Package` type since `ownerType` isn't threaded onto `Package` yet
+ *  outside of what this workstream owns (see the doc comment below). */
+export interface OwnableRef {
+  owner: string;
+  /** "org" when the org branch below applies; anything else (including
+   *  absent, for a `Package` that doesn't carry this field yet) is treated
+   *  as a plain user-owned package. */
+  ownerType?: string;
+}
+
+/** The minimal caller identity `isPackageOwner` needs, satisfied by both a
+ *  `Requester` (route handlers) and `Session["user"]` (server components). */
+export interface OwnerIdentity {
+  id?: string;
+  handle?: string;
+}
+
+function identityFrom(requesterOrSession: OwnerIdentity | Session | null | undefined): OwnerIdentity {
+  if (!requesterOrSession) return {};
+  if ("user" in requesterOrSession) {
+    return { id: requesterOrSession.user?.id, handle: requesterOrSession.user?.handle ?? undefined };
+  }
+  return requesterOrSession;
+}
+
+/**
+ * True when `requesterOrSession` counts as `pkg`'s owner (G-P3): a signed-in
+ * user whose handle matches `pkg.owner`, when `pkg.ownerType` is "user" or
+ * absent — OR, when `pkg.ownerType` is "org", a member of that org with role
+ * "owner" or "admin" (a plain "member" gets paid-download access via
+ * `canDownload` below, same as anyone else, but doesn't count as an owner —
+ * they can't publish new versions or manage the package's status). This is
+ * the one helper every owner check in the app should call instead of
+ * re-deriving `handle === pkg.owner`, so org-owned packages behave
+ * consistently everywhere access is decided.
+ *
+ * NEEDS CHANGE ELSEWHERE: `Package`/`PackageSummary` (src/lib/types.ts) don't
+ * carry `ownerType` yet, and catalog/db.ts's row-to-Package mapping (outside
+ * the `creator()` function this workstream owns) doesn't select it either —
+ * only `packages.ownerType` in the DB and this function's own direct queries
+ * (publish.ts, orgs.ts's `transferPackage`) know about it today. Until
+ * `ownerType` is added to those types and threaded through, every `Package`
+ * object read via `catalog.get`/`catalog.list` has `ownerType` absent, so
+ * this function's org branch never triggers from catalog-sourced data — it
+ * silently (and safely) falls back to the plain user-handle check, matching
+ * pre-G-P3 behavior. That means org members won't yet show as the owner on
+ * `/p/[owner]/[name]` or get the owner's free-download bypass there until
+ * that plumbing lands.
+ */
+export async function isPackageOwner(
+  requesterOrSession: OwnerIdentity | Session | null | undefined,
+  pkg: OwnableRef
+): Promise<boolean> {
+  const { id, handle } = identityFrom(requesterOrSession);
+
+  if (pkg.ownerType === "org") {
+    if (!id) return false;
+    const role = await getMemberRole(pkg.owner, id);
+    return role === "owner" || role === "admin";
+  }
+
+  return Boolean(handle && handle === pkg.owner);
 }
 
 export interface Access {
@@ -51,7 +117,7 @@ export async function resolveAccess(
   session: Session | null | undefined
 ): Promise<Access> {
   const isFree = isFreePackage(pkg);
-  const isOwner = Boolean(session?.user?.handle && session.user.handle === pkg.owner);
+  const isOwner = await isPackageOwner(session, pkg);
 
   // Free packages and owners never need a purchase lookup — skip the query
   // entirely rather than asking the database a question whose answer can't

@@ -2,19 +2,67 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
+import { desc, eq, gte } from "drizzle-orm";
 import { getRequester } from "@/lib/requester";
 import { isAdmin } from "@/lib/admin";
-import { isDbEnabled } from "@/lib/db/client";
+import { getDb, isDbEnabled } from "@/lib/db/client";
 import { getCatalog } from "@/lib/catalog";
 import { listQueue } from "@/lib/moderation";
+import { packages, packageVersions } from "@/lib/db/schema";
 import { CATALOG_ALL_LIMIT } from "@/lib/types";
 import { listCollections } from "@/lib/collections";
+import { listAllRefundRequests } from "@/lib/refunds";
+import { RefundRequestsPanel } from "@/components/RefundRequestsPanel";
+import { listRecentAdvisories } from "@/lib/advisories";
 import {
   ApproveRejectButtons,
   FeaturedCollectionToggle,
   FeaturedToggle,
+  PostAdvisoryForm,
   ReportActions,
+  WithdrawAdvisoryButton,
 } from "@/app/admin/AdminControls";
+
+/** Floor for the "Flagged uploads" section — versions scoring at or above
+ *  this are worth a human glance even though publish.ts only auto-holds a
+ *  package for review at 70+ (see HIGH_RISK_THRESHOLD in src/lib/publish.ts).
+ *  Same default as `GET /api/v1/admin/scans`. */
+const FLAGGED_MIN_SCORE = 40;
+const FLAGGED_LIMIT = 50;
+
+interface FlaggedVersion {
+  owner: string;
+  name: string;
+  version: string;
+  riskScore: number;
+  scanFlags: string[];
+  publishedAt: string;
+}
+
+/** Recent package versions scoring at or above `FLAGGED_MIN_SCORE`, newest
+ *  first — same query `GET /api/v1/admin/scans` runs, inlined here so the
+ *  admin page's initial render doesn't need a self-fetch. */
+async function listFlaggedVersions(): Promise<FlaggedVersion[]> {
+  const db = getDb();
+  if (!db) return [];
+
+  const rows = await db
+    .select({
+      owner: packages.owner,
+      name: packages.name,
+      version: packageVersions.version,
+      riskScore: packageVersions.riskScore,
+      scanFlags: packageVersions.scanFlags,
+      publishedAt: packageVersions.publishedAt,
+    })
+    .from(packageVersions)
+    .innerJoin(packages, eq(packageVersions.packageId, packages.id))
+    .where(gte(packageVersions.riskScore, FLAGGED_MIN_SCORE))
+    .orderBy(desc(packageVersions.publishedAt))
+    .limit(FLAGGED_LIMIT);
+
+  return rows.map((r) => ({ ...r, publishedAt: r.publishedAt.toISOString() }));
+}
 
 export const metadata: Metadata = {
   title: "Admin",
@@ -42,11 +90,23 @@ export default async function AdminPage() {
   }
 
   const catalog = await getCatalog();
-  const [queue, { items: everything }, { items: allCollections }] = await Promise.all([
+  const [
+    queue,
+    { items: everything },
+    { items: allCollections },
+    refundRequests,
+    flaggedVersions,
+    recentAdvisories,
+  ] = await Promise.all([
     listQueue(),
     catalog.list({ includeHidden: true, limit: CATALOG_ALL_LIMIT }),
     // Y2: every collection, public and private — admins can feature either.
     listCollections({ includePrivate: true, limit: 100 }),
+    // Z4: every refund request — an admin can act on any of them.
+    listAllRefundRequests(),
+    // Z2: recent high-risk publishes and every advisory.
+    listFlaggedVersions(),
+    listRecentAdvisories(),
   ]);
 
   // Featuring only works on DB-backed packages (setPackageFeatured needs a
@@ -113,6 +173,14 @@ export default async function AdminPage() {
       </Section>
 
       <Section
+        title="Refund requests"
+        empty="No refund requests."
+        isEmpty={refundRequests.length === 0}
+      >
+        <RefundRequestsPanel requests={refundRequests} />
+      </Section>
+
+      <Section
         title="Featured packages"
         empty="No live database-backed packages yet."
         isEmpty={liveDbPackages.length === 0}
@@ -163,6 +231,75 @@ export default async function AdminPage() {
           ))}
         </ul>
       </Section>
+
+      <Section
+        title="Flagged uploads"
+        empty={`Nothing scored ${FLAGGED_MIN_SCORE} or higher recently.`}
+        isEmpty={flaggedVersions.length === 0}
+      >
+        <ul className="flex flex-col gap-3">
+          {flaggedVersions.map((v) => (
+            <li key={`${v.owner}/${v.name}@${v.version}`} className="rounded-lg border border-border p-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <Link
+                  href={`/p/${v.owner}/${v.name}`}
+                  className="font-mono text-sm text-accent hover:text-accent-hover"
+                >
+                  {v.owner}/{v.name}@{v.version}
+                </Link>
+                <span className="text-xs font-medium text-fg-subtle">
+                  risk score {v.riskScore} · {new Date(v.publishedAt).toLocaleDateString()}
+                </span>
+              </div>
+              {v.scanFlags.length > 0 && (
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {v.scanFlags.map((id) => (
+                    <span
+                      key={id}
+                      className="rounded-full border border-border px-2 py-0.5 font-mono text-[10px] text-fg-subtle"
+                    >
+                      {id}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      </Section>
+
+      <Section title="Advisories" empty="" isEmpty={false}>
+        <div className="flex flex-col gap-6">
+          <PostAdvisoryForm />
+          {recentAdvisories.length === 0 ? (
+            <p className="text-sm text-fg-muted">No advisories posted yet.</p>
+          ) : (
+            <ul className="flex flex-col gap-3">
+              {recentAdvisories.map((a) => (
+                <li key={a.id} className="rounded-lg border border-border p-3">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <Link
+                        href={`/p/${a.owner}/${a.name}`}
+                        className="font-mono text-sm text-accent hover:text-accent-hover"
+                      >
+                        {a.owner}/{a.name}
+                      </Link>
+                      <p className="text-xs text-fg-subtle">
+                        {a.severity} · {a.title}
+                        {a.withdrawnAt && " · withdrawn"}
+                      </p>
+                    </div>
+                    {!a.withdrawnAt && (
+                      <WithdrawAdvisoryButton owner={a.owner} name={a.name} id={a.id} />
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </Section>
     </PageShell>
   );
 }
@@ -170,7 +307,12 @@ export default async function AdminPage() {
 function PageShell({ children }: { children: ReactNode }) {
   return (
     <div className="mx-auto max-w-4xl px-4 py-10 sm:px-6 lg:px-8">
-      <h1 className="text-2xl font-semibold text-fg">Admin</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-2xl font-semibold text-fg">Admin</h1>
+        <Link href="/admin/analytics" className="text-sm text-accent hover:text-accent-hover">
+          Analytics
+        </Link>
+      </div>
       <p className="mt-2 max-w-2xl text-sm text-fg-muted">
         Review queue, reports, and featured packages.
       </p>

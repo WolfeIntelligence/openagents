@@ -6,16 +6,19 @@
 // DATABASE_URL is set, but every exported function here degrades gracefully (falls
 // back to the seed catalog, or is a no-op) if getDb() returns null.
 
-import { and, eq, gte, ilike, inArray, ne, or, sql } from "drizzle-orm";
+import { and, eq, gte, ilike, inArray, lt, ne, or, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import {
   downloadEvents,
+  downloadRollups,
+  organizations,
   packageFiles,
   packages,
   packagesFtsExpression,
   packageVersions,
   users,
 } from "@/lib/db/schema";
+import { utcDay } from "@/lib/analytics";
 import {
   buildCorrectedQuery,
   buildVocabulary,
@@ -75,6 +78,7 @@ function rowToSummary(row: PackageRow): PackageSummary {
     // with the real counts; this layer never stores its own copy. See ./index.
     stats: { downloads: 0, stars: 0 },
     featured: row.featured,
+    ownerType: row.ownerType === "org" ? "org" : "user",
     status: row.status as PackageStatus,
     deprecation:
       row.status === "deprecated"
@@ -156,6 +160,7 @@ async function rowToPackage(db: Db, row: PackageRow): Promise<Package> {
       })),
     stats: { downloads: 0, stars: 0 }, // filled in by `withStats` — see ./index
     featured: row.featured,
+    ownerType: row.ownerType === "org" ? "org" : "user",
     status: row.status as PackageStatus,
     deprecation:
       row.status === "deprecated"
@@ -288,28 +293,73 @@ function sortSummaries(items: PackageSummary[], sort: CatalogQuery["sort"]): Pac
   return arr;
 }
 
-/** Unique-client download counts per package over the trailing 7 days, keyed
- *  by "owner/name" (G-S4). `count(distinct clientHash)` rather than a row
- *  count, since `download_events` can have several rows a day per client
- *  across days, and "trending" means how many distinct installers, not how
- *  many installs. */
+/**
+ * Download counts per package over the trailing 7 days, keyed by "owner/name"
+ * (G-S4, updated for Z5).
+ *
+ * Reads the pre-aggregated `download_rollups.count` (summed per package across
+ * days before today) plus a raw `download_events` count for today, rather than
+ * scanning every raw event in the window — the whole point of the rollup table.
+ * That trades one bit of precision for it: a rollup day's count is already
+ * deduped per-client-per-day (same as the old `count(distinct clientHash)`
+ * here), but summing several such days counts a repeat visitor once per day
+ * they installed rather than once across the whole 7-day window. Invisible at
+ * the ranking granularity this powers.
+ *
+ * Falls back to the original whole-window `count(distinct clientHash)` scan
+ * when there are no rollup rows in range at all — an empty/not-yet-populated
+ * rollup table (fresh deployment, or the nightly cron hasn't run yet) must
+ * never look like nothing is trending.
+ */
 async function queryTrendingCounts(
   db: Db,
   refs: { owner: string; name: string }[]
 ): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   if (refs.length === 0) return out;
-  const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  const rows = await db
-    .select({
-      owner: downloadEvents.owner,
-      name: downloadEvents.name,
-      count: sql<number>`count(distinct ${downloadEvents.clientHash})::int`,
-    })
-    .from(downloadEvents)
-    .where(gte(downloadEvents.day, since))
-    .groupBy(downloadEvents.owner, downloadEvents.name);
-  for (const row of rows) out.set(`${row.owner}/${row.name}`, row.count);
+  const today = utcDay();
+  const since = utcDay(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000));
+
+  const [rollupRows, todayRows] = await Promise.all([
+    db
+      .select({
+        owner: downloadRollups.owner,
+        name: downloadRollups.name,
+        count: sql<number>`sum(${downloadRollups.count})::int`,
+      })
+      .from(downloadRollups)
+      .where(and(gte(downloadRollups.day, since), lt(downloadRollups.day, today)))
+      .groupBy(downloadRollups.owner, downloadRollups.name),
+    db
+      .select({
+        owner: downloadEvents.owner,
+        name: downloadEvents.name,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(downloadEvents)
+      .where(eq(downloadEvents.day, today))
+      .groupBy(downloadEvents.owner, downloadEvents.name),
+  ]);
+
+  if (rollupRows.length === 0) {
+    const fallback = await db
+      .select({
+        owner: downloadEvents.owner,
+        name: downloadEvents.name,
+        count: sql<number>`count(distinct ${downloadEvents.clientHash})::int`,
+      })
+      .from(downloadEvents)
+      .where(gte(downloadEvents.day, since))
+      .groupBy(downloadEvents.owner, downloadEvents.name);
+    for (const row of fallback) out.set(`${row.owner}/${row.name}`, row.count);
+    return out;
+  }
+
+  for (const row of rollupRows) out.set(`${row.owner}/${row.name}`, row.count);
+  for (const row of todayRows) {
+    const key = `${row.owner}/${row.name}`;
+    out.set(key, (out.get(key) ?? 0) + row.count);
+  }
   return out;
 }
 
@@ -509,12 +559,25 @@ export function createDbCatalog(seed: Catalog): Catalog {
 
     async creator(handle: string): Promise<Creator | null> {
       const db = getDb();
-      const [seedCreator, dbUser, dbPackageCount] = await Promise.all([
+      // G-P3: `handle` may name a user OR an organization — they share one
+      // namespace (see reserved.ts's `isHandleTaken`), so a package's `owner`
+      // resolves the same way regardless of which one actually owns it. Org
+      // rows win over a user row on the rare handle collision that shouldn't
+      // exist in practice (creation checks both tables), same precedence
+      // `dbUser` already had over `seedCreator` below.
+      const [seedCreator, dbUser, dbOrg, dbPackageCount] = await Promise.all([
         seed.creator(handle),
         db
           ? safe(
               db.select().from(users).where(eq(users.handle, handle)).limit(1).then((r) => r[0]),
               `creator(${handle}) user lookup`,
+              undefined
+            )
+          : Promise.resolve(undefined),
+        db
+          ? safe(
+              db.select().from(organizations).where(eq(organizations.handle, handle)).limit(1).then((r) => r[0]),
+              `creator(${handle}) org lookup`,
               undefined
             )
           : Promise.resolve(undefined),
@@ -531,14 +594,14 @@ export function createDbCatalog(seed: Catalog): Catalog {
           : Promise.resolve(0),
       ]);
 
-      if (!seedCreator && !dbUser) return null;
+      if (!seedCreator && !dbUser && !dbOrg) return null;
 
       return {
         handle,
-        displayName: dbUser?.name ?? seedCreator?.displayName ?? handle,
-        bio: dbUser?.bio ?? seedCreator?.bio,
-        avatarUrl: dbUser?.image ?? seedCreator?.avatarUrl,
-        url: dbUser?.website ?? seedCreator?.url,
+        displayName: dbOrg?.displayName ?? dbUser?.name ?? seedCreator?.displayName ?? handle,
+        bio: dbOrg?.bio ?? dbUser?.bio ?? seedCreator?.bio,
+        avatarUrl: dbOrg?.avatarUrl ?? dbUser?.image ?? seedCreator?.avatarUrl,
+        url: dbOrg?.website ?? dbUser?.website ?? seedCreator?.url,
         packageCount: (seedCreator?.packageCount ?? 0) + dbPackageCount,
       };
     },

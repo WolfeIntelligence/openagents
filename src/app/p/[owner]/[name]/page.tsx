@@ -32,6 +32,10 @@ import { buildSoftwareSourceCodeLd } from "@/lib/seo";
 import { formatPricing } from "@/lib/format";
 import { getActivePurchase } from "@/lib/purchases";
 import { AddToCollection } from "@/components/AddToCollection";
+import { isPackageOwner } from "@/lib/access";
+import { AdvisoryBanner } from "@/components/AdvisoryBanner";
+import { VerifiedSourceBadge } from "@/components/VerifiedSourceBadge";
+import { RecentlyViewedRecord } from "@/components/RecentlyViewed";
 
 type Params = { owner: string; name: string };
 type TabId = "readme" | "files" | "manifest" | "versions" | "reviews";
@@ -110,7 +114,11 @@ export default async function PackagePage({
   // here and reused below to drive the owner action panel.
   const requester = await getRequester();
   const viewerIsAdmin = await isAdmin(requester);
-  const viewerIsOwner = Boolean(requester?.handle && requester.handle === pkg.owner);
+  // G-P3: org owners/admins count as the package owner too — see access.ts's
+  // isPackageOwner. `pkg` doesn't carry `ownerType` yet (see that helper's
+  // "NEEDS CHANGE ELSEWHERE" note), so this stays equivalent to the old plain
+  // handle comparison until that plumbing lands.
+  const viewerIsOwner = await isPackageOwner(requester, pkg);
   if ((pkg.status === "pending" || pkg.status === "unlisted") && !viewerIsOwner && !viewerIsAdmin) {
     notFound();
   }
@@ -160,6 +168,7 @@ export default async function PackagePage({
           <KindBadge kind={manifest.kind} />
           <PricingBadge pricing={manifest.pricing} />
           <StatusBadge status={pkg.status} />
+          <VerifiedSourceBadge owner={owner} name={name} />
           <ReportButton owner={owner} name={name} />
         </div>
         <p className="mt-2 max-w-2xl text-sm text-fg-muted">{manifest.summary}</p>
@@ -185,6 +194,7 @@ export default async function PackagePage({
             />
           </div>
         )}
+        <AdvisoryBanner owner={owner} name={name} version={manifest.version} />
         {(viewerIsOwner || viewerIsAdmin) && (
           <div className="mt-4">
             <OwnerActions
@@ -401,6 +411,7 @@ export default async function PackagePage({
           </div>
         </aside>
       </div>
+      <RecentlyViewedRecord owner={owner} name={name} title={manifest.title} kind={manifest.kind} />
     </div>
   );
 }
@@ -675,41 +686,65 @@ function VersionsTab({
   }
   return (
     <ul className="flex flex-col gap-4">
-      {versions.map((v) => (
-        <li key={v.version} className="rounded-lg border border-border p-4">
-          <div className="flex items-center justify-between">
-            <span className="font-mono text-sm font-semibold text-fg">v{v.version}</span>
-            <span className="text-xs text-fg-subtle">
-              {new Date(v.publishedAt).toLocaleDateString()}
-            </span>
-          </div>
-          {v.changelog && <p className="mt-1.5 text-sm text-fg-muted">{v.changelog}</p>}
-          {/* Per-version actions (S4/G-V1). The Files link points at the raw-file
-              API rather than the file-viewer page — that page is owned by
-              another workstream and doesn't take a `?version=` param yet. */}
-          <div className="mt-2 flex flex-wrap items-center gap-3 text-xs">
-            {canDownload && (
-              <a
-                href={`/api/v1/packages/${owner}/${name}/versions/${v.version}/download`}
-                className="font-medium text-accent hover:underline"
-              >
-                Download
-              </a>
-            )}
-            {canReadEntry && (
-              <a
-                href={`/api/v1/packages/${owner}/${name}/files/${entry}?version=${v.version}`}
+      {versions.map((v, i) => {
+        // `versions` is newest-first (sortVersionsDesc) — the entry right
+        // after this one is the chronologically previous version, when one
+        // exists (Z3).
+        const previous = versions[i + 1];
+        return (
+          <li key={v.version} className="rounded-lg border border-border p-4">
+            <div className="flex items-center justify-between">
+              <span className="font-mono text-sm font-semibold text-fg">v{v.version}</span>
+              <span className="text-xs text-fg-subtle">
+                {new Date(v.publishedAt).toLocaleDateString()}
+              </span>
+            </div>
+            {v.changelog && <p className="mt-1.5 text-sm text-fg-muted">{v.changelog}</p>}
+            {/* Per-version actions (S4/G-V1). The Files link points at the raw-file
+                API rather than the file-viewer page — that page is owned by
+                another workstream and doesn't take a `?version=` param yet. */}
+            <div className="mt-2 flex flex-wrap items-center gap-3 text-xs">
+              {canDownload && (
+                <a
+                  href={`/api/v1/packages/${owner}/${name}/versions/${v.version}/download`}
+                  className="font-medium text-accent hover:underline"
+                >
+                  Download
+                </a>
+              )}
+              {canReadEntry && (
+                <a
+                  href={`/api/v1/packages/${owner}/${name}/files/${entry}?version=${v.version}`}
+                  className="text-fg-muted hover:text-fg hover:underline"
+                >
+                  Files
+                </a>
+              )}
+              {/* Version diffs (Z3): "Compare with previous" jumps straight to
+                  this version against the one right before it; "Diff" is the
+                  generic entry point into the compare page (useful for the
+                  oldest version, which has no "previous" to compare against). */}
+              {previous && (
+                <Link
+                  href={`/p/${owner}/${name}/compare?from=${previous.version}&to=${v.version}`}
+                  className="text-fg-muted hover:text-fg hover:underline"
+                >
+                  Compare with previous
+                </Link>
+              )}
+              <Link
+                href={`/p/${owner}/${name}/compare?to=${v.version}`}
                 className="text-fg-muted hover:text-fg hover:underline"
               >
-                Files
-              </a>
-            )}
-          </div>
-          <p className="mt-2 rounded-md bg-surface-hover px-2 py-1 font-mono text-xs text-fg-muted">
-            npx {cli} add {owner}/{name}@{v.version}
-          </p>
-        </li>
-      ))}
+                Diff
+              </Link>
+            </div>
+            <p className="mt-2 rounded-md bg-surface-hover px-2 py-1 font-mono text-xs text-fg-muted">
+              npx {cli} add {owner}/{name}@{v.version}
+            </p>
+          </li>
+        );
+      })}
     </ul>
   );
 }

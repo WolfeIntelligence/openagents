@@ -2,7 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 
-const ALL_SCOPES = ["read", "publish", "star", "download"] as const;
+const ALL_SCOPES = ["read", "publish", "star", "download", "review"] as const;
 type Scope = (typeof ALL_SCOPES)[number];
 
 export interface TokenListItem {

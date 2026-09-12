@@ -8,6 +8,7 @@ import { error, json, preflight, withCors } from "@/lib/api";
 import { rateLimit } from "@/lib/ratelimit";
 import { absoluteUrl } from "@/lib/site";
 import type { Package } from "@/lib/types";
+import { isPackageOwner } from "@/lib/access";
 import {
   formatRepo,
   getSourceByPackage,
@@ -47,7 +48,7 @@ async function authorize(request: NextRequest, owner: string, name: string): Pro
   }
 
   const admin = await isAdmin(requester);
-  const isOwner = Boolean(requester.handle && requester.handle === pkg.owner);
+  const isOwner = await isPackageOwner(requester, pkg);
   if (!isOwner && !admin) {
     return { errorResponse: error(403, "only the package owner or an admin can do this") };
   }

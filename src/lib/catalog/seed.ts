@@ -169,6 +169,7 @@ function loadPackage(owner: string, name: string, pkgPath: string): Package | nu
     // never a placeholder.
     stats: { downloads: 0, stars: 0 },
     featured: meta.featured ?? false,
+    ownerType: "user", // seed owners are plain handles (see catalog/<owner>/owner.json)
     status: "live", // seed packages are reviewed by pull request, so always live
     source: "seed",
     createdAt,
