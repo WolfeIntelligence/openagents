@@ -67,6 +67,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
   const collectionRoutes: MetadataRoute.Sitemap = [
     { url: absoluteUrl("/collections"), changeFrequency: "daily", priority: 0.6 },
+    { url: absoluteUrl("/changelog"), changeFrequency: "daily", priority: 0.6 },
     ...collections.map((c) => ({
       url: absoluteUrl(`/c/${c.owner}/${c.slug}`),
       lastModified: c.updatedAt,
