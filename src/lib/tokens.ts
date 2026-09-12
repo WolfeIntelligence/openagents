@@ -14,8 +14,10 @@ import { apiTokens, users } from "@/lib/db/schema";
 
 /** Scopes a token can carry. A session (browser cookie) implicitly has all of them —
  *  this is the token-only subset, defined here since tokens are the only thing that
- *  actually restricts by scope. */
-export const TOKEN_SCOPES = ["read", "publish", "star", "download"] as const;
+ *  actually restricts by scope. `review` (Z3) gates writing/deleting a review via a
+ *  token — the reviews route used to reuse `star` for this, which conflated two
+ *  unrelated actions under one scope. */
+export const TOKEN_SCOPES = ["read", "publish", "star", "download", "review"] as const;
 export type TokenScope = (typeof TOKEN_SCOPES)[number];
 
 /** `oa_` + 40 lowercase hex chars (20 random bytes). */

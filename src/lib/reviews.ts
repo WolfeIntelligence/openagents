@@ -20,6 +20,21 @@ export const MAX_REVIEW_BODY_LENGTH = 2000;
 export const DEFAULT_REVIEWS_PAGE_SIZE = 20;
 export const MAX_REVIEWS_PAGE_SIZE = 100;
 
+/** `sort=helpful|newest|rating` (Z3). "helpful" has no real helpfulness-vote
+ *  data yet — until one exists, it's defined as highest rating first, then
+ *  newest (same ordering as "rating"), which is why both map to the same
+ *  `orderBy` in `getReviewsPage`. Document this if a real helpfulness signal
+ *  (e.g. a vote count) is ever added: "helpful" should switch to ordering by
+ *  it, distinct from "rating". */
+export const REVIEW_SORTS = ["newest", "rating", "helpful"] as const;
+export type ReviewSort = (typeof REVIEW_SORTS)[number];
+
+/** Normalizes a client-supplied `sort` value, defaulting to "newest" for
+ *  anything absent or unrecognized. */
+export function normalizeReviewSort(raw: unknown): ReviewSort {
+  return raw === "rating" || raw === "helpful" ? raw : "newest";
+}
+
 // ---------------------------------------------------------------------------
 // Pure helpers — no DB access, safe to unit test directly.
 // ---------------------------------------------------------------------------
@@ -138,13 +153,17 @@ async function recalcRatingStats(owner: string, name: string): Promise<void> {
 export async function getReviewsPage(
   owner: string,
   name: string,
-  opts: { limit?: number; offset?: number } = {}
+  opts: { limit?: number; offset?: number; sort?: ReviewSort } = {}
 ): Promise<ReviewsPage> {
   const db = getDb();
   if (!db) return EMPTY_PAGE;
 
   const limit = clampReviewsLimit(opts.limit);
   const offset = clampReviewsOffset(opts.offset);
+  const sort = opts.sort ?? "newest";
+  // "rating" and "helpful" share an order until a real helpfulness vote
+  // exists — see the REVIEW_SORTS comment.
+  const orderBy = sort === "newest" ? [desc(reviews.createdAt)] : [desc(reviews.rating), desc(reviews.createdAt)];
 
   try {
     const [rows, [agg], [pkg]] = await Promise.all([
@@ -163,7 +182,7 @@ export async function getReviewsPage(
         .from(reviews)
         .innerJoin(users, eq(reviews.userId, users.id))
         .where(and(eq(reviews.owner, owner), eq(reviews.name, name)))
-        .orderBy(desc(reviews.createdAt))
+        .orderBy(...orderBy)
         .limit(limit)
         .offset(offset),
       db
@@ -349,5 +368,51 @@ export async function deleteReview(userId: string, owner: string, name: string):
     return { ok: true };
   } catch {
     return { ok: false, status: 500, message: "failed to delete review" };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Pagination math + rating distribution (Z3) — the "Load more" control and the
+// 5-bar histogram on the Reviews tab.
+// ---------------------------------------------------------------------------
+
+/** True when there are more reviews past the page that ended at
+ *  `offset + limit` out of `total` — drives whether `ReviewsTab` shows a
+ *  "Load more" control. Pure arithmetic, no DB access. */
+export function reviewsHasMore(offset: number, limit: number, total: number): boolean {
+  return offset + limit < total;
+}
+
+/** Counts of each star rating (1..5), always all five keys present (0 for a
+ *  rating nobody has given) so callers can render a fixed 5-bar histogram
+ *  without checking for missing keys. Pure — no DB access, directly testable
+ *  against a plain array of ratings; `ratingHistogram` below is the DB-backed
+ *  wrapper that feeds it real data. */
+export function buildRatingHistogram(ratings: number[]): Record<1 | 2 | 3 | 4 | 5, number> {
+  const histogram: Record<1 | 2 | 3 | 4 | 5, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  for (const r of ratings) {
+    if (Number.isInteger(r) && r >= 1 && r <= 5) {
+      histogram[r as 1 | 2 | 3 | 4 | 5]++;
+    }
+  }
+  return histogram;
+}
+
+/**
+ * Rating distribution for one package, computed from every review (not just
+ * one page) — same "recount from source rows" spirit as `recalcRatingStats`.
+ * Returns all-zero when the DB is off or the query fails; never throws.
+ */
+export async function ratingHistogram(owner: string, name: string): Promise<Record<1 | 2 | 3 | 4 | 5, number>> {
+  const db = getDb();
+  if (!db) return buildRatingHistogram([]);
+  try {
+    const rows = await db
+      .select({ rating: reviews.rating })
+      .from(reviews)
+      .where(and(eq(reviews.owner, owner), eq(reviews.name, name)));
+    return buildRatingHistogram(rows.map((r) => r.rating));
+  } catch {
+    return buildRatingHistogram([]);
   }
 }

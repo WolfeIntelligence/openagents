@@ -1,7 +1,8 @@
 import Link from "next/link";
-import { getOwnReview, getReviewsPage } from "@/lib/reviews";
+import { DEFAULT_REVIEWS_PAGE_SIZE, getOwnReview, getReviewsPage, ratingHistogram } from "@/lib/reviews";
 import { RatingStars } from "@/components/RatingStars";
 import { ReviewForm } from "@/components/ReviewForm";
+import { ReviewsList } from "@/components/ReviewsList";
 
 interface ReviewsTabProps {
   owner: string;
@@ -18,16 +19,18 @@ interface ReviewsTabProps {
  *  tab. The tab itself is only rendered when `isDbEnabled()` (see the package
  *  page) — every read here already no-ops safely without a database too. */
 export async function ReviewsTab({ owner, name, isOwner, userId, userHandle }: ReviewsTabProps) {
-  const [page, ownReview] = await Promise.all([
-    getReviewsPage(owner, name, { limit: 50 }),
+  const [page, ownReview, histogram] = await Promise.all([
+    getReviewsPage(owner, name, { limit: DEFAULT_REVIEWS_PAGE_SIZE }),
     userId && !isOwner ? getOwnReview(userId, owner, name) : Promise.resolve(null),
+    ratingHistogram(owner, name),
   ]);
 
   return (
     <div className="flex flex-col gap-6">
       {page.average !== undefined && page.count > 0 && (
-        <div className="flex items-center gap-2">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-6">
           <RatingStars average={page.average} count={page.count} />
+          <RatingHistogramBars histogram={histogram} total={page.count} />
         </div>
       )}
 
@@ -52,62 +55,45 @@ export async function ReviewsTab({ owner, name, isOwner, userId, userHandle }: R
         </p>
       )}
 
-      {page.items.length === 0 ? (
-        <p className="text-sm text-fg-muted">No reviews yet.</p>
-      ) : (
-        <ul className="flex flex-col gap-4">
-          {page.items.map((review) => (
-            <li key={review.id} className="rounded-lg border border-border p-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium text-fg">
-                    {review.user.name ?? (review.user.handle ? `@${review.user.handle}` : "A user")}
-                    {userHandle && review.user.handle === userHandle && (
-                      <span className="ml-1.5 text-xs font-normal text-fg-subtle">(you)</span>
-                    )}
-                  </span>
-                  {review.verifiedPurchase && (
-                    <span className="rounded-full border border-accent-border bg-accent-muted px-2 py-0.5 text-[10px] uppercase tracking-wide text-accent">
-                      Verified purchase
-                    </span>
-                  )}
-                </div>
-                <span className="text-xs text-fg-subtle">{formatDate(review.updatedAt)}</span>
-              </div>
-              <div className="mt-1.5">
-                <StaticStars rating={review.rating} />
-              </div>
-              {review.body && <p className="mt-2 text-sm text-fg-muted">{review.body}</p>}
-            </li>
-          ))}
-        </ul>
-      )}
+      <ReviewsList
+        owner={owner}
+        name={name}
+        initialItems={page.items}
+        initialCount={page.count}
+        pageSize={DEFAULT_REVIEWS_PAGE_SIZE}
+        userHandle={userHandle}
+      />
     </div>
   );
 }
 
-function StaticStars({ rating }: { rating: number }) {
+/** 5-bar rating distribution (Z3), 5 stars down to 1 — each bar's width is
+ *  that rating's share of every review, not just the visible page. Renders
+ *  nothing when nobody has rated yet, matching `RatingStars`' own
+ *  "no history, no row" convention. */
+function RatingHistogramBars({
+  histogram,
+  total,
+}: {
+  histogram: Record<1 | 2 | 3 | 4 | 5, number>;
+  total: number;
+}) {
+  if (total === 0) return null;
   return (
-    <span className="inline-flex items-center gap-0.5" aria-label={`${rating} out of 5 stars`}>
-      {[1, 2, 3, 4, 5].map((n) => (
-        <svg
-          key={n}
-          viewBox="0 0 20 20"
-          fill={n <= rating ? "currentColor" : "none"}
-          stroke="currentColor"
-          strokeWidth="1.5"
-          className={`h-3.5 w-3.5 ${n <= rating ? "text-warning" : "text-border-strong"}`}
-          aria-hidden="true"
-        >
-          <path d="M10 1.5l2.6 5.4 5.9.7-4.3 4.1 1.1 5.9-5.3-2.9-5.3 2.9 1.1-5.9-4.3-4.1 5.9-.7L10 1.5Z" />
-        </svg>
-      ))}
-    </span>
+    <div className="flex flex-col gap-1">
+      {([5, 4, 3, 2, 1] as const).map((stars) => {
+        const count = histogram[stars];
+        const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+        return (
+          <div key={stars} className="flex items-center gap-2 text-xs text-fg-subtle">
+            <span className="w-3 text-right font-mono">{stars}</span>
+            <div className="h-1.5 w-24 overflow-hidden rounded-full bg-border">
+              <div className="h-full rounded-full bg-warning" style={{ width: `${pct}%` }} />
+            </div>
+            <span className="w-8 font-mono">{count}</span>
+          </div>
+        );
+      })}
+    </div>
   );
-}
-
-function formatDate(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }

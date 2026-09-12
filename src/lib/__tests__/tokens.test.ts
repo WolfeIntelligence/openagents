@@ -56,8 +56,11 @@ test("hashToken produces different digests for different tokens", () => {
   assert.notEqual(a, b);
 });
 
-test("TOKEN_SCOPES is exactly the four documented scopes", () => {
-  assert.deepEqual([...TOKEN_SCOPES].sort(), ["download", "publish", "read", "star"]);
+test("TOKEN_SCOPES is exactly the five documented scopes", () => {
+  // Z3 added "review" (writing/deleting a review via a token, replacing the
+  // reviews route's previous reuse of "star" for that) — updated here since
+  // this list is the thing that would otherwise drift silently out of sync.
+  assert.deepEqual([...TOKEN_SCOPES].sort(), ["download", "publish", "read", "review", "star"]);
 });
 
 test("hasScope: a session requester may do anything regardless of its scopes list", () => {

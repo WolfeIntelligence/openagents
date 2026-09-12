@@ -9,6 +9,7 @@ import {
   clampReviewsOffset,
   deleteReview,
   getReviewsPage,
+  normalizeReviewSort,
   upsertReview,
 } from "@/lib/reviews";
 import { rateLimit } from "@/lib/ratelimit";
@@ -50,12 +51,16 @@ export async function GET(
   const { searchParams } = new URL(request.url);
   const limit = clampReviewsLimit(searchParams.get("limit") ?? undefined);
   const offset = clampReviewsOffset(searchParams.get("offset") ?? undefined);
+  const sort = normalizeReviewSort(searchParams.get("sort") ?? undefined);
 
-  const page = await getReviewsPage(owner, name, { limit, offset });
+  const page = await getReviewsPage(owner, name, { limit, offset, sort });
   return json({
     items: page.items,
     average: page.average ?? null,
     count: page.count,
+    limit,
+    offset,
+    sort,
   });
 }
 
@@ -70,7 +75,7 @@ export async function PUT(
   }
 
   const requester = await getRequester(request);
-  if (!requester || !hasScope(requester, "star")) {
+  if (!requester || !hasScope(requester, "review")) {
     return error(401, "sign in to leave a review");
   }
 
@@ -114,7 +119,7 @@ export async function DELETE(
   }
 
   const requester = await getRequester(request);
-  if (!requester || !hasScope(requester, "star")) {
+  if (!requester || !hasScope(requester, "review")) {
     return error(401, "sign in to manage your review");
   }
 

@@ -16,8 +16,20 @@ const STATUS_PILL_TONE: Partial<Record<PackageStatus, string>> = {
   pending: "border-border-strong text-fg-muted",
 };
 
+/** Z3: packages that shipped something in the last two weeks get a visible
+ *  "Updated" pill, not just the muted fallback text in the stats row below
+ *  (which only shows at all when a package has zero stars/downloads). */
+const RECENTLY_UPDATED_MS = 14 * 86_400_000;
+
+function isRecentlyUpdated(iso: string): boolean {
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return false;
+  return Date.now() - then <= RECENTLY_UPDATED_MS;
+}
+
 export function PackageCard({ pkg }: { pkg: PackageSummary }) {
   const statusLabel = STATUS_PILL_LABEL[pkg.status];
+  const recentlyUpdated = isRecentlyUpdated(pkg.updatedAt);
 
   return (
     <Link
@@ -40,6 +52,11 @@ export function PackageCard({ pkg }: { pkg: PackageSummary }) {
 
       <div className="flex flex-wrap items-center gap-1.5">
         <KindBadge kind={pkg.kind} />
+        {recentlyUpdated && (
+          <span className="inline-flex items-center rounded-full border border-accent-border bg-accent-muted px-2 py-0.5 text-xs font-medium text-accent">
+            Updated
+          </span>
+        )}
         {statusLabel && (
           <span
             className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${STATUS_PILL_TONE[pkg.status]}`}
