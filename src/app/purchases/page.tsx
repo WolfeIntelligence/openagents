@@ -13,6 +13,8 @@ import { installCommand } from "@/lib/runtimes";
 import { cliSpec } from "@/lib/site";
 import { isPurchaseActive } from "@/lib/purchases";
 import { ManageSubscriptionButton } from "@/components/ManageSubscriptionButton";
+import { latestRefundRequestsByPurchaseIds, refundEligibility } from "@/lib/refunds";
+import { RefundRequestButton } from "@/components/RefundRequestButton";
 
 export const metadata: Metadata = {
   title: "Purchases",
@@ -59,6 +61,7 @@ async function PurchasesTable({
 }) {
   const rows = await db
     .select({
+      id: purchases.id,
       owner: packages.owner,
       name: packages.name,
       title: packages.title,
@@ -94,6 +97,8 @@ async function PurchasesTable({
       />
     );
   }
+
+  const refundRequestsByPurchase = await latestRefundRequestsByPurchaseIds(rows.map((r) => r.id));
 
   return (
     <div className="overflow-x-auto rounded-lg border border-border">
@@ -182,6 +187,23 @@ async function PurchasesTable({
                       !isSubscription && <span className="text-fg-subtle">—</span>
                     )}
                     {isSubscription && <ManageSubscriptionButton />}
+                    {!isSubscription &&
+                      (() => {
+                        const existing = refundRequestsByPurchase.get(row.id);
+                        const eligibility = refundEligibility({
+                          status: row.status,
+                          createdAt: row.createdAt,
+                          stripeSubscriptionId: row.stripeSubscriptionId,
+                        });
+                        return (
+                          <RefundRequestButton
+                            purchaseId={row.id}
+                            eligible={eligibility.eligible}
+                            ineligibleReason={eligibility.eligible ? undefined : eligibility.reason}
+                            hasOpenRequest={existing?.status === "open"}
+                          />
+                        );
+                      })()}
                   </div>
                 </td>
               </tr>
