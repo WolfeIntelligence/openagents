@@ -139,7 +139,11 @@ Rules enforced at publish time:
   package's current published version.
 
 The CLI's `openagents validate [dir]` command runs exactly these checks locally, with
-no external dependency — see [CLI Reference](/docs/cli).
+no external dependency — see [CLI Reference](/docs/cli). Registry-side, a package's
+*content* (not just its manifest) is also run through the automated
+[content scan](/docs/publishing#content-scan) at publish time — a separate check
+from the structural validation above, covering things like prompt-injection
+attempts and unexpected network calls rather than manifest shape.
 
 ## Directory conventions
 

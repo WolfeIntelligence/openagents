@@ -76,6 +76,15 @@ The install target layout per runtime is defined in `src/lib/runtimes.ts` and ma
 - **Email notifications**: purchase/sale/report/status emails via Resend (`RESEND_API_KEY`, `EMAIL_FROM`, `ADMIN_EMAIL`), routed through `src/lib/notify.ts`; a no-op without the key.
 - **Account controls**: `GET /api/v1/account/export` (full JSON export), `DELETE /api/v1/account` (session-only, blocked while owning packages with sales or holding an active subscription).
 - **Sharing/SEO**: per-package/creator OG images, `GET /api/v1/packages/{owner}/{name}/badge` (SVG), `SoftwareSourceCode` JSON-LD, `/feed.xml` RSS.
+- **Organizations**: a shared publisher identity (`organizations`/`organization_members` tables, `handle` in the same namespace as user handles; `packages.ownerType` says which a given `owner` is). Roles `owner`/`admin`/`member` — `owner`/`admin` can publish/transfer under the org and manage membership, all members get paid-download access to what the org owns, the last `owner` can't leave. CRUD under `/api/v1/orgs`; pages at `/org/{handle}`, `/settings/orgs`. `POST /api/v1/packages/{owner}/{name}/transfer` moves a package to another user or org.
+- **Trust & safety**: every publish is scanned (`src/lib/scan.ts`) against a fixed rule set (prompt-injection overrides, hidden/encoded text, credential-reads-plus-network-calls, calls to unknown hosts, destructive commands, leaked secrets, obfuscated eval); the result (`riskScore`/`scanFlags` on `package_versions`) is returned as `PublishResult.scan`. A score ≥ 70 holds a brand-new package as `pending` or unlists a flagged update to an existing package pending admin review (`/admin`, `GET /api/v1/admin/scans?min=`). Admins can also post **security advisories** (`advisories` table, severity `low`\|`moderate`\|`high`\|`critical`) against a package; the CLI blocks installing a `critical` one without `--force`.
+- **Version diffs & changelog**: `GET /api/v1/packages/{owner}/{name}/versions/{version}/diff?against=` (per-file status/hunks/summary, `402` for a paid package's non-preview files) backs the compare page `/p/{owner}/{name}/compare?from=&to=&view=split|unified`; a site-wide `/changelog` (+ `?owner=`) and `/changelog.xml` list every published version.
+- **Reviews, extended**: `?sort=newest|rating|helpful&limit=&offset=` plus a rating histogram on `GET .../reviews`; writing/deleting a review needs the new `review` token scope (in addition to a session).
+- **Refunds**: `refund_requests` table (`open`\|`approved`\|`denied`\|`refunded`), 14-day window, one-time purchases only. `POST /api/v1/refunds`, `GET ?mine=1|seller=1`, seller/admin resolves via `POST /api/v1/refunds/{id}` — approval issues a full Stripe refund (fee and transfer both reversed) and revokes access, same as a `charge.refunded` webhook. `GET /api/v1/admin/refunds` for the platform-wide view; `/refund-policy` page.
+- **Seller onboarding**: `POST /api/v1/validate` (unauthenticated, no side effects) runs manifest validation plus a README linter (title, install/usage, example, no TODO placeholders, minimum length, no broken relative links, tags/runtimes/homepage hints) — what the `/publish` wizard's Check step calls before submitting.
+- **Ops**: three Vercel Cron routes authorized by `CRON_SECRET` (`POST /api/cron/rollup-downloads` daily, `/api/cron/cleanup` hourly, `/api/cron/review-reminders` daily); `download_rollups` table (daily aggregates per package/runtime/version) feeds `/dashboard` and `sort=trending` without scanning raw events. `429` responses carry `X-RateLimit-Limit`/`X-RateLimit-Remaining`/`X-RateLimit-Reset` alongside `Retry-After`. `GET /api/v1/admin/analytics?days=` backs `/admin/analytics`.
+- **Search**: `GET /api/v1/search?suggest=1&limit=6` returns a slim shape for header search-as-you-type; keyboard shortcuts (`/`, `g e`, `g h`, `g t`, `g c`, `?`); a locally-stored "recently viewed" rail on the landing page.
+- **End-to-end tests**: a Playwright suite (`npm run test:e2e`, `docs/E2E.md`) runs in CI against a zero-env build.
 - Everything must build and run with **zero env vars** set (seed catalog only). This is the deploy target for v0.1.
 
 ## Shared types
@@ -149,6 +158,29 @@ All code imports domain types from `src/lib/types.ts` (authoritative, do not red
 | `/api/billing/portal`                          | POST create a Stripe billing portal session for a subscriber (session required) |
 | `/api/connect/onboard`                         | POST create a Stripe Connect onboarding link (auth required) |
 | `/api/webhooks/stripe`                         | POST Stripe webhook, incl. `invoice.paid`/`invoice.payment_failed`/`customer.subscription.updated`/`customer.subscription.deleted` (503 if disabled) |
+| `/api/v1/orgs`                                 | GET list (`?member=me` for the caller's own), POST create |
+| `/api/v1/orgs/[handle]`                        | GET/PATCH/DELETE one organization + its members |
+| `/api/v1/orgs/[handle]/members`                | PUT add/change a member's role |
+| `/api/v1/orgs/[handle]/members/[userHandle]`   | DELETE remove a member (or leave) |
+| `/api/v1/packages/[owner]/[name]/transfer`     | POST transfer a package to another user/org handle |
+| `/api/v1/packages/[owner]/[name]/advisories`   | GET list open advisories, POST create (admin) |
+| `/api/v1/packages/[owner]/[name]/advisories/[id]` | PATCH edit/withdraw an advisory (admin) |
+| `/api/v1/admin/scans`                          | GET recently-published versions by scan score (`?min=`, admin only) |
+| `/api/v1/packages/[owner]/[name]/versions/[version]/diff` | GET per-file diff against another version (`?against=`) |
+| `/api/v1/validate`                             | POST manifest + README-lint check, no auth, no side effects |
+| `/api/v1/refunds`                              | GET list (`?mine=1`\|`?seller=1`), POST request a refund |
+| `/api/v1/refunds/[id]`                         | POST approve/deny (seller or admin) |
+| `/api/v1/admin/refunds`                        | GET every refund request (admin only) |
+| `/api/v1/admin/analytics`                      | GET platform-wide analytics (`?days=`, admin only) |
+| `/api/cron/rollup-downloads`                   | POST daily download rollup (internal, `CRON_SECRET` bearer) |
+| `/api/cron/cleanup`                            | POST hourly housekeeping (internal, `CRON_SECRET` bearer) |
+| `/api/cron/review-reminders`                   | POST daily review-reminder emails (internal, `CRON_SECRET` bearer) |
+| `/org/[handle]`                                | organization profile + its packages |
+| `/settings/orgs`                               | signed-in user's organizations and membership |
+| `/p/[owner]/[name]/compare`                    | version compare view (`?from=&to=&view=split\|unified`) |
+| `/changelog`, `/changelog.xml`                 | site-wide published-versions feed (`?owner=`) |
+| `/admin/analytics`                             | admin-only platform analytics dashboard |
+| `/refund-policy`                               | buyer-facing refund policy explainer |
 
 ## Directory layout
 
@@ -170,8 +202,10 @@ src/instrumentation.ts                   # Next.js instrumentation hook (onReque
 src/lib/monitoring.ts                    # captureError(): stderr always, Sentry when SENTRY_DSN is set
 src/lib/notify.ts                        # fire-and-forget notification hooks called by route handlers
 src/lib/email.ts                         # Resend-backed email sending (no-op without RESEND_API_KEY)
+src/lib/scan.ts                          # publish-time content scan rules (prompt-injection, secrets, etc.)
 public/openapi.json                      # OpenAPI 3.1 document for every /api/v1 route (+ checkout/webhook/connect)
 src/content/docs/*.md                    # docs pages
+docs/E2E.md                              # what the Playwright e2e suite (npm run test:e2e) covers
 ```
 
 ## UI direction
