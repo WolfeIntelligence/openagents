@@ -3,8 +3,9 @@
   "framework": "nextjs",
   "buildCommand": "npm run build",
   "crons": [
-    { "path": "/api/cron/rollup-downloads", "schedule": "15 2 * * *" },
-    { "path": "/api/cron/cleanup", "schedule": "30 * * * *" },
-    { "path": "/api/cron/review-reminders", "schedule": "0 9 * * *" }
+    {
+      "path": "/api/cron/daily",
+      "schedule": "15 2 * * *"
+    }
   ]
 }

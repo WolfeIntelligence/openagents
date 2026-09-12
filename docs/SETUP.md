@@ -150,10 +150,16 @@ Vercel's Cron scheduler (configured in `vercel.json`) calls these on a fixed
 schedule and injects `CRON_SECRET` as the bearer token automatically on the hosted
 deployment:
 
+> **Vercel Hobby note:** the hosted deployment schedules a single job, `GET /api/cron/daily`
+> (`15 2 * * *`), which runs the three routes below in order — Hobby plans allow at most two
+> cron jobs, each once per day. The individual routes stay callable with the same secret if
+> you want finer schedules on a paid plan or another scheduler.
+
+
 | Route | Schedule |
 |---|---|
 | `POST /api/cron/rollup-downloads` | Daily — aggregates `download_events` into `download_rollups` for the previous UTC day. |
-| `POST /api/cron/cleanup` | Hourly — expires stale rate-limit rows and abandoned checkout artifacts. |
+| `POST /api/cron/cleanup` | Daily (via `/api/cron/daily`) — expires stale rate-limit rows and abandoned checkout artifacts. |
 | `POST /api/cron/review-reminders` | Daily — reminder emails for packages stuck in review/scan-flagged status. |
 
 See `src/content/docs/self-hosting.md#cron-jobs` for the full detail and

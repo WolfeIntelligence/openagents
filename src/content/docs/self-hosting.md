@@ -193,10 +193,16 @@ as the bearer token automatically on the hosted deployment — for a self-host o
 another platform, wire up your own scheduler to call these on the same cadence with
 the same header):
 
+> **Vercel Hobby note:** the hosted deployment schedules a single job, `GET /api/cron/daily`
+> (`15 2 * * *`), which runs the three routes below in order — Hobby plans allow at most two
+> cron jobs, each once per day. The individual routes stay callable with the same secret if
+> you want finer schedules on a paid plan or another scheduler.
+
+
 | Route | Schedule | Does |
 |---|---|---|
 | `POST /api/cron/rollup-downloads` | Daily | Aggregates the prior UTC day's `download_events` into the `download_rollups` table — per package/day, with per-runtime and per-version breakdowns — so `/dashboard` and `sort=trending` don't scan raw events as they grow. |
-| `POST /api/cron/cleanup` | Hourly | Expires stale rate-limit windows and prunes abandoned checkout artifacts. |
+| `POST /api/cron/cleanup` | Daily (via `/api/cron/daily`) | Expires stale rate-limit windows and prunes abandoned checkout artifacts. |
 | `POST /api/cron/review-reminders` | Daily | Emails a reminder for packages that have sat in the pending-review or scan-flagged queue past a threshold (via `src/lib/notify.ts` — a no-op without `RESEND_API_KEY`, same as every other notification). |
 
 See [API Reference](/docs/api#cron-jobs) for the request/response shape. Without
