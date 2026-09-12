@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { auth, isAuthEnabled } from "@/lib/auth";
 import { isDbEnabled } from "@/lib/db/client";
 import { isStripeEnabled, PLATFORM_FEE_BPS } from "@/lib/stripe";
-import { PublishForm } from "@/components/PublishForm";
+import { PublishWizard } from "@/components/PublishWizard";
 import { CopyButton } from "@/components/CopyButton";
 import { cliSpec } from "@/lib/site";
 
@@ -133,7 +133,7 @@ export default async function PublishPage() {
           </div>
         ) : (
           <div className="mt-4 rounded-lg border border-border p-6">
-            <PublishForm />
+            <PublishWizard />
           </div>
         )}
       </div>

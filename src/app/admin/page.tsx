@@ -9,6 +9,8 @@ import { getCatalog } from "@/lib/catalog";
 import { listQueue } from "@/lib/moderation";
 import { CATALOG_ALL_LIMIT } from "@/lib/types";
 import { listCollections } from "@/lib/collections";
+import { listAllRefundRequests } from "@/lib/refunds";
+import { RefundRequestsPanel } from "@/components/RefundRequestsPanel";
 import {
   ApproveRejectButtons,
   FeaturedCollectionToggle,
@@ -42,11 +44,15 @@ export default async function AdminPage() {
   }
 
   const catalog = await getCatalog();
-  const [queue, { items: everything }, { items: allCollections }] = await Promise.all([
+  const [queue, { items: everything }, { items: allCollections }, refundRequests] = await Promise.all([
     listQueue(),
     catalog.list({ includeHidden: true, limit: CATALOG_ALL_LIMIT }),
     // Y2: every collection, public and private — admins can feature either.
     listCollections({ includePrivate: true, limit: 100 }),
+    // Z4: every refund request, not just ones stuck on a seller — an admin can
+    // act on any of them (see POST /api/v1/refunds/[id]), not only ones a
+    // seller hasn't gotten to yet.
+    listAllRefundRequests(),
   ]);
 
   // Featuring only works on DB-backed packages (setPackageFeatured needs a
@@ -110,6 +116,14 @@ export default async function AdminPage() {
             </li>
           ))}
         </ul>
+      </Section>
+
+      <Section
+        title="Refund requests"
+        empty="No refund requests."
+        isEmpty={refundRequests.length === 0}
+      >
+        <RefundRequestsPanel requests={refundRequests} />
       </Section>
 
       <Section

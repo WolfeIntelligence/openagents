@@ -337,3 +337,36 @@ export async function createExpressLoginLink(accountId: string): Promise<{ url: 
   const link = await stripe.accounts.createLoginLink(accountId);
   return { url: link.url };
 }
+
+/**
+ * Refunds a PaymentIntent — used by the refund-request approve flow
+ * (src/lib/refunds.ts). `amountCents` omitted means a full refund; every
+ * caller today omits it (a refund request is all-or-nothing per the refund
+ * policy), but the param is here for a future partial refund.
+ *
+ * Research (stripe npm package, checked under node_modules/stripe/cjs/
+ * resources/Refunds.d.ts, `RefundCreateParams`): `refund_application_fee` and
+ * `reverse_transfer` are both plain boolean fields on `refunds.create` itself
+ * — refunding a destination charge, crediting back our application fee, and
+ * reversing the transfer to the seller's connected account (proportional to
+ * the amount refunded) all happen as one API call. There is no separate v1 or
+ * v2 "reverse transfer" endpoint to call afterward, so no
+ * `reverseTransferForRefund` export exists here — `refund_application_fee:
+ * true, reverse_transfer: true` on this one call is the whole thing.
+ */
+export async function refundPaymentIntent(
+  paymentIntentId: string,
+  amountCents?: number
+): Promise<{ id: string; status: string | null }> {
+  const stripe = getStripe();
+  if (!stripe) throw new Error("payments not configured");
+
+  const refund = await stripe.refunds.create({
+    payment_intent: paymentIntentId,
+    ...(amountCents !== undefined ? { amount: amountCents } : {}),
+    refund_application_fee: true,
+    reverse_transfer: true,
+  });
+
+  return { id: refund.id, status: refund.status ?? null };
+}
