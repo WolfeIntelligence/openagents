@@ -15,6 +15,13 @@
       "when": 1789086391603,
       "tag": "0001_batch3",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789213619014,
+      "tag": "0002_batch4",
+      "breakpoints": true
     }
   ]
 }
