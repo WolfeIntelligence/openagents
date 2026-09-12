@@ -33,6 +33,8 @@ import { formatPricing } from "@/lib/format";
 import { getActivePurchase } from "@/lib/purchases";
 import { AddToCollection } from "@/components/AddToCollection";
 import { isPackageOwner } from "@/lib/access";
+import { AdvisoryBanner } from "@/components/AdvisoryBanner";
+import { VerifiedSourceBadge } from "@/components/VerifiedSourceBadge";
 
 type Params = { owner: string; name: string };
 type TabId = "readme" | "files" | "manifest" | "versions" | "reviews";
@@ -165,6 +167,7 @@ export default async function PackagePage({
           <KindBadge kind={manifest.kind} />
           <PricingBadge pricing={manifest.pricing} />
           <StatusBadge status={pkg.status} />
+          <VerifiedSourceBadge owner={owner} name={name} />
           <ReportButton owner={owner} name={name} />
         </div>
         <p className="mt-2 max-w-2xl text-sm text-fg-muted">{manifest.summary}</p>
@@ -190,6 +193,7 @@ export default async function PackagePage({
             />
           </div>
         )}
+        <AdvisoryBanner owner={owner} name={name} version={manifest.version} />
         {(viewerIsOwner || viewerIsAdmin) && (
           <div className="mt-4">
             <OwnerActions

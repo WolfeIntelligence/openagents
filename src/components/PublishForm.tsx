@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { useState, type FormEvent } from "react";
+import { ScanReport } from "@/components/ScanReport";
+import type { ScanResult } from "@/lib/scan";
 
 export interface PublishSuccess {
   id: string;
@@ -9,6 +11,8 @@ export interface PublishSuccess {
   url: string;
   /** Absent on responses from a pre-status backend; treated the same as "live". */
   status?: string;
+  /** Publish-time content scan (see src/lib/scan.ts); absent on older backends. */
+  scan?: ScanResult;
 }
 
 export type PublishSubmitResult =
@@ -115,6 +119,11 @@ export function PublishSuccessBanner({ published }: { published: PublishSuccess 
           </Link>
         ) : null}
       </p>
+      {published?.scan && published.scan.flags.length > 0 ? (
+        <div className="mt-4">
+          <ScanReport scan={published.scan} />
+        </div>
+      ) : null}
     </div>
   );
 }
