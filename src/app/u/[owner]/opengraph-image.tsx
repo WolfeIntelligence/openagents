@@ -120,7 +120,7 @@ export default async function Image({ params }: { params: Promise<{ owner: strin
           <span style={{ display: "flex" }}>
             {creator.packageCount.toLocaleString()} package{creator.packageCount === 1 ? "" : "s"}
           </span>
-          <span style={{ display: "flex" }}>★ {totals.stars.toLocaleString()} stars</span>
+          <span style={{ display: "flex" }}>{totals.stars.toLocaleString()} stars</span>
           <span style={{ display: "flex" }}>↓ {totals.downloads.toLocaleString()} downloads</span>
         </div>
       </div>

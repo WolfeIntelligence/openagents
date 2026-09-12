@@ -163,7 +163,7 @@ export default async function Image({
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div style={{ display: "flex", gap: 24, fontSize: 22, color: MUTED }}>
             <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              ★ {pkg.stats.stars.toLocaleString()}
+              {pkg.stats.stars.toLocaleString()} stars
             </span>
             <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
               ↓ {pkg.stats.downloads.toLocaleString()}

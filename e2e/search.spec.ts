@@ -6,7 +6,7 @@ test("header search lands on /explore with the matching package", async ({ page 
   // second copy renders for the mobile breakpoint but is `hidden` in CSS at
   // this viewport — see src/components/Header.tsx).
   const search = page.getByRole("search").first();
-  await search.getByRole("searchbox", { name: "Search packages" }).fill("code review");
+  await search.getByRole("combobox", { name: "Search packages" }).fill("code review");
   await search.getByRole("button", { name: "Search" }).click();
 
   await expect(page).toHaveURL(/\/explore\?q=code\+review/);
