@@ -17,10 +17,10 @@ import GitHub from "next-auth/providers/github";
 import Google from "next-auth/providers/google";
 import type {} from "next-auth/jwt";
 import { DrizzleAdapter } from "@auth/drizzle-adapter";
-import { and, eq, ne } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { getDb, isDbEnabled } from "@/lib/db/client";
 import { accounts, sessions, users, verificationTokens } from "@/lib/db/schema";
-import { isReservedHandle } from "@/lib/reserved";
+import { isHandleTaken, isReservedHandle } from "@/lib/reserved";
 
 export type ProviderId = "github" | "google";
 
@@ -59,9 +59,10 @@ function slugifyHandle(raw: string): string {
 /**
  * Derive a unique handle from a raw base string (a GitHub login, or the local-part of a
  * Google email). Slugified first; appends -2, -3, ... when the result is reserved
- * (B12a — blocklist + seed catalog owners) or already taken by a *different* user. In
- * JWT-only mode (no `db`) there is nowhere durable to check collisions against other
- * users, so only the reserved-word check applies.
+ * (B12a — blocklist + seed catalog owners), already taken by a *different* user, or
+ * (G-P3) already taken by an organization — orgs and users share one handle namespace.
+ * In JWT-only mode (no `db`) there is nowhere durable to check collisions against other
+ * users/orgs, so only the reserved-word check applies.
  */
 async function uniqueHandle(
   base: string,
@@ -77,11 +78,7 @@ async function uniqueHandle(
   while (true) {
     let taken = isReservedHandle(candidate);
     if (!taken && db) {
-      const where = userId
-        ? and(eq(users.handle, candidate), ne(users.id, userId))
-        : eq(users.handle, candidate);
-      const [collision] = await db.select({ id: users.id }).from(users).where(where).limit(1);
-      taken = Boolean(collision);
+      taken = await isHandleTaken(candidate, { excludeUserId: userId });
     }
     if (!taken) return candidate;
     const suffixStr = `-${suffix}`;

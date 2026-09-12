@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isReservedHandle, RESERVED_HANDLES, seedOwners } from "../reserved";
+import { isHandleTaken, isReservedHandle, RESERVED_HANDLES, seedOwners } from "../reserved";
 
 test("RESERVED_HANDLES: contains the documented static set", () => {
   const expected = [
@@ -17,6 +17,8 @@ test("RESERVED_HANDLES: contains the documented static set", () => {
     "me",
     "null",
     "openagents",
+    // G-P3: /org/<handle> organization pages.
+    "org",
     "p",
     "pricing",
     "publish",
@@ -60,4 +62,12 @@ test("isReservedHandle: reserves every seed catalog owner directory", () => {
   for (const owner of seedOwners()) {
     assert.equal(isReservedHandle(owner), true, `expected seed owner "${owner}" to be reserved`);
   }
+});
+
+test("isHandleTaken: false with no database configured (zero-env default)", async () => {
+  // This suite never sets DATABASE_URL, so isHandleTaken must degrade to
+  // "nothing to collide with" rather than throw — same convention as every
+  // other DB-backed export in this codebase.
+  assert.equal(await isHandleTaken("zwolfe42"), false);
+  assert.equal(await isHandleTaken("some-org"), false);
 });

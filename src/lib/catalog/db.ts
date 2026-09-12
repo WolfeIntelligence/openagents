@@ -11,6 +11,7 @@ import { getDb } from "@/lib/db/client";
 import {
   downloadEvents,
   downloadRollups,
+  organizations,
   packageFiles,
   packages,
   packagesFtsExpression,
@@ -556,12 +557,25 @@ export function createDbCatalog(seed: Catalog): Catalog {
 
     async creator(handle: string): Promise<Creator | null> {
       const db = getDb();
-      const [seedCreator, dbUser, dbPackageCount] = await Promise.all([
+      // G-P3: `handle` may name a user OR an organization — they share one
+      // namespace (see reserved.ts's `isHandleTaken`), so a package's `owner`
+      // resolves the same way regardless of which one actually owns it. Org
+      // rows win over a user row on the rare handle collision that shouldn't
+      // exist in practice (creation checks both tables), same precedence
+      // `dbUser` already had over `seedCreator` below.
+      const [seedCreator, dbUser, dbOrg, dbPackageCount] = await Promise.all([
         seed.creator(handle),
         db
           ? safe(
               db.select().from(users).where(eq(users.handle, handle)).limit(1).then((r) => r[0]),
               `creator(${handle}) user lookup`,
+              undefined
+            )
+          : Promise.resolve(undefined),
+        db
+          ? safe(
+              db.select().from(organizations).where(eq(organizations.handle, handle)).limit(1).then((r) => r[0]),
+              `creator(${handle}) org lookup`,
               undefined
             )
           : Promise.resolve(undefined),
@@ -578,14 +592,14 @@ export function createDbCatalog(seed: Catalog): Catalog {
           : Promise.resolve(0),
       ]);
 
-      if (!seedCreator && !dbUser) return null;
+      if (!seedCreator && !dbUser && !dbOrg) return null;
 
       return {
         handle,
-        displayName: dbUser?.name ?? seedCreator?.displayName ?? handle,
-        bio: dbUser?.bio ?? seedCreator?.bio,
-        avatarUrl: dbUser?.image ?? seedCreator?.avatarUrl,
-        url: dbUser?.website ?? seedCreator?.url,
+        displayName: dbOrg?.displayName ?? dbUser?.name ?? seedCreator?.displayName ?? handle,
+        bio: dbOrg?.bio ?? dbUser?.bio ?? seedCreator?.bio,
+        avatarUrl: dbOrg?.avatarUrl ?? dbUser?.image ?? seedCreator?.avatarUrl,
+        url: dbOrg?.website ?? dbUser?.website ?? seedCreator?.url,
         packageCount: (seedCreator?.packageCount ?? 0) + dbPackageCount,
       };
     },
