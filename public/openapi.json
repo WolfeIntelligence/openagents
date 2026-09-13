@@ -3127,7 +3127,7 @@
           "publish"
         ],
         "summary": "Publish from a public GitHub repository",
-        "description": "Fetches openagent.yaml + files from a public GitHub repo URL and publishes them as if submitted directly. Same validation, limits, and REQUIRE_REVIEW behavior as POST /api/v1/publish.",
+        "description": "Fetches files from a public GitHub repo URL and publishes them as if submitted directly. Same validation, limits, and REQUIRE_REVIEW behavior as POST /api/v1/publish. If the repo has its own openagent.yaml at the resolved ref/subdir, that always wins; otherwise the optional `manifest` field, when given, is validated the same way and used instead. Either way, the published manifest's `origin` is forced to the actual repo/commit fetched (and, when `manifest` is what's used, `attested_by` is forced to identify the caller) per the provenance fields in the package format.",
         "security": [
           {
             "sessionCookie": []
@@ -3159,6 +3159,10 @@
                   },
                   "changelog": {
                     "type": "string"
+                  },
+                  "manifest": {
+                    "type": "string",
+                    "description": "A draft openagent.yaml (raw YAML text) to use only when the repo at the resolved ref/subdir has no openagent.yaml of its own. A manifest already in the repo always wins and this field is ignored. The proposal goes through the same schema validation, file-existence check, and ownership rules (e.g. a machine-authenticated caller may still only publish under \"wolfe\") as any other manifest; a repo with neither its own manifest nor a usable proposal here is refused with 400."
                   }
                 }
               }
@@ -3192,6 +3196,14 @@
                     },
                     "scan": {
                       "$ref": "#/components/schemas/ScanResult"
+                    },
+                    "manifestSource": {
+                      "type": "string",
+                      "enum": [
+                        "repo",
+                        "proposed"
+                      ],
+                      "description": "Which manifest governed this import: \"repo\" if openagent.yaml was already in the repo (the `manifest` request field, if any, was ignored), \"proposed\" if the repo had none and the `manifest` request field was used instead."
                     }
                   }
                 }
@@ -3199,7 +3211,7 @@
             }
           },
           "400": {
-            "description": "Validation failed, or repo/ref/subdir could not be resolved",
+            "description": "Validation failed, repo/ref/subdir could not be resolved, or the repo has no openagent.yaml and the proposed `manifest` failed validation or listed a file that doesn't exist in the repo",
             "content": {
               "application/json": {
                 "schema": {

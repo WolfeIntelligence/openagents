@@ -1094,7 +1094,9 @@ curl -X PUT "https://openagents-nu.vercel.app/api/v1/packages/me/my-package/sour
 
 Trigger a sync right now instead of waiting for the next release/tag push — same
 validation and `REQUIRE_REVIEW` behavior as
-[`POST /api/v1/publish/import`](#post-apiv1publishimport).
+[`POST /api/v1/publish/import`](#post-apiv1publishimport), except there's no `manifest`
+field here: the linked repo must carry its own `openagent.yaml` at the configured
+ref/subdir, same as the webhook-triggered sync below.
 
 ```ts
 // 201 Created — same shape as POST /api/v1/publish, when a new version was published
@@ -1371,6 +1373,14 @@ validation, file limits, and `REQUIRE_REVIEW` behavior as
 GitHub instead of the request body. What `openagents publish --from-github <url>` and
 the "Import from GitHub" option on `/publish` both call.
 
+Most repos out in the wild don't carry their own `openagent.yaml`. If the repo at the
+resolved `ref`/`subdir` has one, it always wins. If it doesn't, pass a draft in the
+optional `manifest` field (raw YAML text, the same shape a real `openagent.yaml` would
+hold) and it's used instead — parsed, schema-validated, and checked against the
+repo's actual files exactly like a manifest submitted any other way, including the
+machine publisher's "may only publish under `wolfe`" rule. A repo with neither its own
+manifest nor a usable `manifest` proposal is refused with 400.
+
 ```bash
 curl -X POST "https://openagents-nu.vercel.app/api/v1/publish/import" \
   -H "Authorization: Bearer oa_..." -H "Content-Type: application/json" \
@@ -1384,20 +1394,35 @@ curl -X POST "https://openagents-nu.vercel.app/api/v1/publish/import" \
   ref?: string;        // overrides a ref already embedded in `repo`
   subdir?: string;     // overrides a subdir already embedded in `repo`
   changelog?: string;
+  manifest?: string;   // draft openagent.yaml text, used only when the repo has none of its own
 }
 
-// 201 Created — same shape as POST /api/v1/publish
-{ id: string, version: string, url: string, status: "live" | "pending" }
+// 201 Created — same shape as POST /api/v1/publish, plus manifestSource
+{
+  id: string, version: string, url: string, status: "live" | "pending",
+  // "repo" if the repo's own openagent.yaml was used (`manifest`, if sent, was
+  // ignored); "proposed" if the repo had none and `manifest` was used instead.
+  manifestSource: "repo" | "proposed",
+}
 
-// 400 Bad Request — repo/ref/subdir couldn't be resolved (private repo, missing
-// openagent.yaml at that path, branch doesn't exist), or the fetched manifest fails
-// the same validation as POST /api/v1/publish
+// 400 Bad Request — repo/ref/subdir couldn't be resolved (private repo, branch
+// doesn't exist), or, when the repo has no openagent.yaml, the `manifest` field was
+// missing, failed the same validation as POST /api/v1/publish, or listed a file that
+// doesn't exist in the repo
 // 401 Unauthorized — no session or token
 ```
 
 `ref` defaults to the repository's default branch; `subdir` defaults to the repo root.
 Only public repositories are supported — there's no GitHub App/OAuth flow for private
 repo access.
+
+Either way, the published manifest's `origin` (see
+[Provenance](/docs/package-format#provenance)) is overwritten with the repo/commit this
+import actually fetched — neither the repo's own manifest nor a `manifest` proposal can
+claim a different origin than where its content came from. When a `manifest` proposal
+is what's used, its `attested_by` is likewise overwritten to name the authenticated
+caller, recording that this manifest was drafted by the importer rather than found in
+the repo.
 
 ## Trust & Safety
 
