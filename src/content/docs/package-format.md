@@ -65,6 +65,9 @@ requires:
 | `requires` | string[] | no (default `[]`) | Dependencies on other packages, as `"owner/name@range"` (npm-style semver range), e.g. `openagents/base-rules@^1`. Resolved client-side by CLI 0.3.0's `openagents add` (transitively — a dependency's own `requires` are followed too — with cycle and version-conflict detection; `--no-deps` skips resolution entirely), fetched via [`GET /versions`](/docs/api#get-apiv1packagesownernameversions) on the registry. Still not resolved server-side — the registry itself doesn't install or validate dependency graphs at publish time. |
 | `homepage` | string (URL) | no | Optional link to a project homepage. |
 | `repository` | string (URL) | no | Optional link to the source repository. |
+| `origin` | object | no | Where this package's content originally came from, when it wasn't authored directly against this registry. See [Provenance](#provenance) below. |
+| `evidence` | object[] | no | Supporting links for why the package is trustworthy/fit for purpose. See [Provenance](#provenance) below. |
+| `attested_by` | object | no | Who (agent or person) actually ran the publish. See [Provenance](#provenance) below. |
 
 ### Pricing object
 
@@ -92,6 +95,43 @@ a tag it would have to guess.
 - Shown on the package page (sidebar chips, each linking to a search for that phrase)
   and returned by the package/list/search/[bulk export](/docs/api#get-apiv1catalogndjson)
   APIs.
+
+## Provenance
+
+Three optional fields record where a package's content came from and who actually
+published it — useful when a package wasn't hand-authored against this registry, e.g.
+an agent that imports an existing skill from elsewhere and republishes it. All three
+are returned by the package API (`GET /api/v1/packages/{owner}/{name}`, nested under
+`manifest`) and shown on the package page.
+
+```yaml
+origin:
+  repo: github.com/some-org/some-skill   # "owner/repo" or a full URL, any git host
+  commit: 4b825dc642cb6eb9a060e54bf8d69288fbee4904
+evidence:
+  - url: https://github.com/some-org/some-skill/blob/main/README.md
+    kind: repo
+    note: Original source, MIT licensed
+  - url: https://example.com/benchmark-results
+    kind: benchmark
+attested_by:
+  name: scout
+  run_id: run_2026-09-13_0147
+```
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `origin.repo` | string | yes (within `origin`) | Source repository, `"owner/repo"` or a full URL. |
+| `origin.commit` | string | yes (within `origin`) | Hex git commit sha, short (7+ chars) or full. |
+| `evidence[].url` | string (URL) | yes (within each entry) | Link supporting the claim — a repo, a benchmark, a citation, a test run. |
+| `evidence[].kind` | string | yes (within each entry) | Free-form, ≤ 40 chars, e.g. `repo`, `benchmark`, `citation`, `test-run`, `scan`. |
+| `evidence[].note` | string | no | ≤ 500 chars. |
+| `attested_by.name` | string | yes (within `attested_by`) | The agent name (e.g. `scout`, `wolfe-factory`) or person's handle that ran the publish — distinct from `owner`, the package's identity. |
+| `attested_by.run_id` | string | no | Identifies the specific automated run that produced this publish. |
+
+`evidence` accepts at most 20 entries. None of the three fields are indexed or
+searched — they don't affect `q` matching (see [Capabilities](#capabilities) for the
+field that does).
 
 ## Binary files
 
@@ -154,6 +194,9 @@ Rules enforced at publish time:
 - `inputs[].type` is one of the five allowed input types.
 - `capabilities` has at most 20 entries, each 2–60 characters matching
   `^[a-z][a-z0-9]*(?:[ -][a-z0-9]+)*$` (lowercase words separated by spaces or hyphens).
+- `origin.commit`, when `origin` is present, matches `^[0-9a-f]{7,40}$`.
+- `evidence` has at most 20 entries; each entry's `url` is a valid URL and `kind` is
+  1–40 characters.
 - (Registry only, not the CLI's local `validate`) `files` has at most 200 entries, no
   file over 512 KB, 2 MB total text content, and at most 2 MB total across any binary
   (`encoding: "base64"`) files — see [Binary files](#binary-files); the submitting

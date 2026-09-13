@@ -24,6 +24,12 @@ export const SEMVER_RE =
 export const CAPABILITY_RE = /^[a-z][a-z0-9]*(?:[ -][a-z0-9]+)*$/;
 export const CAPABILITY_MAX_LEN = 60;
 export const MAX_CAPABILITIES = 20;
+export const COMMIT_SHA_RE = /^[0-9a-f]{7,40}$/;
+export const MAX_EVIDENCE = 20;
+export const EVIDENCE_KIND_MAX_LEN = 40;
+export const EVIDENCE_NOTE_MAX_LEN = 500;
+export const ATTESTATION_NAME_MAX_LEN = 100;
+export const ATTESTATION_RUN_ID_MAX_LEN = 100;
 
 /** Parse `openagent.yaml` text into the raw (snake_case) manifest object. */
 export function parseManifest(yamlText) {
@@ -109,6 +115,71 @@ export function validateManifest(m) {
           `capabilities[${i}]: must be lowercase words separated by spaces or hyphens (<= ${CAPABILITY_MAX_LEN} chars), e.g. "reconcile csv"`
         );
       });
+    }
+  }
+
+  if (m.origin !== undefined) {
+    if (m.origin === null || typeof m.origin !== "object") {
+      issues.push("origin: must be a mapping when present");
+    } else {
+      req(typeof m.origin.repo === "string" && m.origin.repo.length > 0, "origin.repo: required, non-empty string");
+      req(
+        typeof m.origin.commit === "string" && COMMIT_SHA_RE.test(m.origin.commit),
+        "origin.commit: must be a hex git commit sha (7-40 chars)"
+      );
+    }
+  }
+
+  if (m.evidence !== undefined) {
+    if (!Array.isArray(m.evidence)) {
+      issues.push("evidence: must be a list when present");
+    } else {
+      req(m.evidence.length <= MAX_EVIDENCE, `evidence: at most ${MAX_EVIDENCE} entries`);
+      m.evidence.forEach((e, i) => {
+        if (e === null || typeof e !== "object") {
+          issues.push(`evidence[${i}]: must be a mapping`);
+          return;
+        }
+        let isValidUrl = false;
+        try {
+          if (typeof e.url === "string") {
+            new URL(e.url);
+            isValidUrl = true;
+          }
+        } catch {
+          isValidUrl = false;
+        }
+        req(isValidUrl, `evidence[${i}].url: must be a valid URL`);
+        req(
+          typeof e.kind === "string" && e.kind.length > 0 && e.kind.length <= EVIDENCE_KIND_MAX_LEN,
+          `evidence[${i}].kind: required, <= ${EVIDENCE_KIND_MAX_LEN} chars`
+        );
+        if (e.note !== undefined) {
+          req(
+            typeof e.note === "string" && e.note.length <= EVIDENCE_NOTE_MAX_LEN,
+            `evidence[${i}].note: <= ${EVIDENCE_NOTE_MAX_LEN} chars`
+          );
+        }
+      });
+    }
+  }
+
+  if (m.attested_by !== undefined) {
+    if (m.attested_by === null || typeof m.attested_by !== "object") {
+      issues.push("attested_by: must be a mapping when present");
+    } else {
+      req(
+        typeof m.attested_by.name === "string" &&
+          m.attested_by.name.length > 0 &&
+          m.attested_by.name.length <= ATTESTATION_NAME_MAX_LEN,
+        `attested_by.name: required, <= ${ATTESTATION_NAME_MAX_LEN} chars`
+      );
+      if (m.attested_by.run_id !== undefined) {
+        req(
+          typeof m.attested_by.run_id === "string" && m.attested_by.run_id.length <= ATTESTATION_RUN_ID_MAX_LEN,
+          `attested_by.run_id: <= ${ATTESTATION_RUN_ID_MAX_LEN} chars`
+        );
+      }
     }
   }
 

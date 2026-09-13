@@ -370,6 +370,54 @@ export default async function PackagePage({
               />
             </SidebarSection>
 
+            {(manifest.origin || (manifest.evidence && manifest.evidence.length > 0) || manifest.attestedBy) && (
+              <SidebarSection title="Provenance">
+                <dl className="flex flex-col gap-2 text-sm">
+                  {manifest.origin && (
+                    <div>
+                      <dt className="text-xs text-fg-muted">Origin</dt>
+                      <dd className="truncate font-mono text-xs text-fg">
+                        {manifest.origin.repo}@{manifest.origin.commit.slice(0, 12)}
+                      </dd>
+                    </div>
+                  )}
+                  {manifest.attestedBy && (
+                    <div>
+                      <dt className="text-xs text-fg-muted">Attested by</dt>
+                      <dd className="truncate text-xs text-fg">
+                        {manifest.attestedBy.name}
+                        {manifest.attestedBy.runId && (
+                          <span className="text-fg-subtle"> · run {manifest.attestedBy.runId}</span>
+                        )}
+                      </dd>
+                    </div>
+                  )}
+                  {manifest.evidence && manifest.evidence.length > 0 && (
+                    <div>
+                      <dt className="text-xs text-fg-muted">Evidence</dt>
+                      <dd>
+                        <ul className="mt-1 flex flex-col gap-1">
+                          {manifest.evidence.map((item, i) => (
+                            <li key={`${item.url}-${i}`}>
+                              <a
+                                href={item.url}
+                                target="_blank"
+                                rel="noreferrer noopener"
+                                className="text-xs text-accent hover:text-accent-hover"
+                                title={item.note}
+                              >
+                                {item.kind}
+                              </a>
+                            </li>
+                          ))}
+                        </ul>
+                      </dd>
+                    </div>
+                  )}
+                </dl>
+              </SidebarSection>
+            )}
+
             <SidebarSection title="Creator">
               <Link
                 href={`/u/${owner}`}
@@ -615,6 +663,18 @@ function ManifestTab({
   ];
   if (manifest.homepage) rows.push(["homepage", manifest.homepage]);
   if (manifest.repository) rows.push(["repository", manifest.repository]);
+  if (manifest.origin) rows.push(["origin", `${manifest.origin.repo}@${manifest.origin.commit}`]);
+  if (manifest.attestedBy) {
+    rows.push([
+      "attested_by",
+      manifest.attestedBy.runId
+        ? `${manifest.attestedBy.name} (run ${manifest.attestedBy.runId})`
+        : manifest.attestedBy.name,
+    ]);
+  }
+  if (manifest.evidence && manifest.evidence.length > 0) {
+    rows.push(["evidence", `${manifest.evidence.length} link${manifest.evidence.length === 1 ? "" : "s"}`]);
+  }
 
   return (
     <div className="flex flex-col gap-8">
