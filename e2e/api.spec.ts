@@ -126,6 +126,38 @@ test("star GET returns {stars, starred}; POST is 503 without a database", async 
   expect(postRes.status()).toBe(503);
 });
 
+test("GET /api/v1/catalog.ndjson streams one JSON object per line", async ({ request }) => {
+  const res = await request.get("/api/v1/catalog.ndjson");
+  expect(res.status()).toBe(200);
+  expect(res.headers()["content-type"]).toContain("application/x-ndjson");
+  const text = await res.text();
+  const lines = text.trim().split("\n");
+  expect(lines.length).toBeGreaterThan(0);
+  const entries = lines.map((line) => JSON.parse(line));
+  for (const key of ["id", "owner", "name", "kind", "version", "updatedAt", "downloadSha256"]) {
+    expect(entries[0]).toHaveProperty(key);
+  }
+  expect(entries.some((e) => e.id === "openagents/pr-reviewer")).toBe(true);
+  // Oldest-updated-first.
+  for (let i = 1; i < entries.length; i++) {
+    expect(entries[i - 1].updatedAt.localeCompare(entries[i].updatedAt)).toBeLessThanOrEqual(0);
+  }
+});
+
+test("GET /api/v1/catalog.ndjson?since=<far future> is empty", async ({ request }) => {
+  const res = await request.get("/api/v1/catalog.ndjson?since=2099-01-01T00:00:00Z");
+  expect(res.status()).toBe(200);
+  const text = await res.text();
+  expect(text.trim()).toBe("");
+});
+
+test("GET /api/v1/catalog.ndjson?since=<bogus> is a 400 JSON error", async ({ request }) => {
+  const res = await request.get("/api/v1/catalog.ndjson?since=not-a-date");
+  expect(res.status()).toBe(400);
+  const body = await res.json();
+  expect(body).toHaveProperty("error");
+});
+
 test("GET /api/v1/openapi has a paths object", async ({ request }) => {
   const res = await request.get("/api/v1/openapi");
   expect(res.status()).toBe(200);

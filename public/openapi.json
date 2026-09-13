@@ -656,6 +656,81 @@
           }
         }
       },
+      "CatalogExportEntry": {
+        "type": "object",
+        "description": "One line of GET /api/v1/catalog.ndjson.",
+        "required": [
+          "id",
+          "owner",
+          "name",
+          "kind",
+          "title",
+          "summary",
+          "version",
+          "license",
+          "tags",
+          "runtimes",
+          "pricing",
+          "updatedAt",
+          "downloadSha256"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "\"owner/name\""
+          },
+          "owner": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "workflow",
+              "harness",
+              "rules",
+              "skill"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "license": {
+            "type": "string"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "runtimes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "pricing": {
+            "$ref": "#/components/schemas/Pricing"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "downloadSha256": {
+            "type": "string",
+            "description": "Hex-encoded sha256 of the same gzip tarball GET .../download serves."
+          }
+        }
+      },
       "Token": {
         "type": "object",
         "required": [
@@ -1705,6 +1780,53 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/CatalogPage"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/catalog.ndjson": {
+      "get": {
+        "tags": [
+          "packages",
+          "search"
+        ],
+        "summary": "Bulk/incremental export: every package as newline-delimited JSON",
+        "description": "Streams one JSON object per line (application/x-ndjson) — a manifest summary, version, tags, kind, updatedAt, and the tarball's downloadSha256 — for every live/deprecated package. Pass `since` (the newest `updatedAt` a previous pull already has) to get only what changed since then, so a mirror never has to page /api/v1/packages one package at a time.",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "Only packages updated at or after this ISO 8601 date-time. Omit for a full export."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK — newline-delimited JSON, one CatalogExportEntry per line",
+            "content": {
+              "application/x-ndjson": {
+                "schema": {
+                  "type": "string",
+                  "description": "Newline-delimited JSON; each line is a CatalogExportEntry object.",
+                  "items": {
+                    "$ref": "#/components/schemas/CatalogExportEntry"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid since",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }

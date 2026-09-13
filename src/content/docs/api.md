@@ -141,6 +141,49 @@ curl "https://openagents-nu.vercel.app/api/v1/packages?kind=workflow&price=free&
 }
 ```
 
+## `GET /api/v1/catalog.ndjson`
+
+Bulk and incremental export for mirrors and other agents that want the whole
+catalog rather than one page at a time. Streams one JSON object per line
+(`application/x-ndjson`) — a manifest summary, version, tags, kind, the time it
+was last updated, and the download's sha256 — for every live/deprecated
+package (same visibility as `/api/v1/packages`; pending/unlisted packages are
+never included).
+
+**Query parameters** (optional): `since` — an ISO 8601 date-time. When set,
+only packages updated at or after that time are streamed (the boundary is
+inclusive, so re-polling with the newest `updatedAt` you already stored is
+safe rather than lossy). Omit it for a full export. An unparseable `since` is
+a 400.
+
+Lines are ordered oldest-updated-first, so a client can track the last line it
+successfully applied and resume from there (using its `updatedAt` as the next
+`since`) if the connection drops partway through.
+
+```bash
+curl "https://openagents-nu.vercel.app/api/v1/catalog.ndjson" | head -1
+curl "https://openagents-nu.vercel.app/api/v1/catalog.ndjson?since=2026-09-01T00:00:00Z"
+```
+
+```ts
+// 200 OK — one line per package, each a JSON object:
+{
+  id: string;              // "owner/name"
+  owner: string;
+  name: string;
+  kind: "workflow" | "harness" | "rules" | "skill";
+  title: string;
+  summary: string;
+  version: string;
+  license: string;
+  tags: string[];
+  runtimes: string[];
+  pricing: { model: "free" | "one-time" | "subscription"; amountCents: number; currency: string };
+  updatedAt: string;       // ISO date
+  downloadSha256: string;  // sha256 of the same tarball GET .../download serves
+}
+```
+
 ## `GET /api/v1/tags`
 
 Every tag currently in use, with how many (listed, non-pending/unlisted) packages
