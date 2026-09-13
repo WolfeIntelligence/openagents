@@ -9,6 +9,7 @@ import type { NextRequest } from "next/server";
 import type { Session } from "next-auth";
 import { auth } from "@/lib/auth";
 import { TOKEN_SCOPES, verifyToken, type TokenScope } from "@/lib/tokens";
+import { ensureMachinePrincipal, MACHINE_SCOPES, verifyMachineSecret } from "@/lib/machine";
 
 export interface Requester {
   /** Stable user id (users.id). */
@@ -17,8 +18,10 @@ export interface Requester {
   handle?: string;
   name?: string | null;
   image?: string | null;
-  /** How the caller authenticated. Tokens carry scopes; sessions are unrestricted. */
-  via: "session" | "token";
+  /** How the caller authenticated. Tokens carry scopes; sessions are
+   *  unrestricted; "machine" is the OPENAGENTS_MACHINE_SECRET principal —
+   *  also scope-limited, like a token (see src/lib/machine.ts). */
+  via: "session" | "token" | "machine";
   scopes: string[];
 }
 
@@ -60,6 +63,29 @@ export async function requesterFromBearer(token: string): Promise<Requester | nu
 }
 
 /**
+ * Resolves the caller from OPENAGENTS_MACHINE_SECRET (see src/lib/machine.ts).
+ * Null for anything that isn't an exact, constant-time match against a
+ * configured (>= 32 char) secret, or when the org/user it needs can't be
+ * created/found — same "just unauthenticated" contract as `requesterFromBearer`,
+ * so `getRequester` can try this first and fall through to ordinary token
+ * verification without the two ever being ambiguous (an `oa_`-shaped token can
+ * never equal the machine secret, and vice versa).
+ */
+export async function requesterFromMachineSecret(token: string): Promise<Requester | null> {
+  if (!verifyMachineSecret(token)) return null;
+  const principal = await ensureMachinePrincipal();
+  if (!principal) return null;
+  return {
+    id: principal.id,
+    handle: principal.handle,
+    name: "WolfeOS",
+    image: null,
+    via: "machine",
+    scopes: [...MACHINE_SCOPES],
+  };
+}
+
+/**
  * Resolves the requester for a route handler or server component. Pass the
  * `NextRequest` when you have one so bearer tokens are honoured; server
  * components (no request object) fall back to the session cookie only.
@@ -68,8 +94,10 @@ export async function getRequester(request?: NextRequest | Request): Promise<Req
   const header = request?.headers.get("authorization");
   if (header && /^bearer\s+/i.test(header)) {
     const token = header.replace(/^bearer\s+/i, "").trim();
-    if (token) return requesterFromBearer(token);
-    return null;
+    if (!token) return null;
+    const machine = await requesterFromMachineSecret(token);
+    if (machine) return machine;
+    return requesterFromBearer(token);
   }
   return fromSession(await auth());
 }

@@ -11,6 +11,7 @@ import { isReservedHandle } from "@/lib/reserved";
 import { MAX_BINARY_BYTES } from "@/lib/files";
 import { invalidateCatalogCache } from "@/lib/catalog/cache";
 import { getMemberRole } from "@/lib/orgs";
+import { checkMachineOwner } from "@/lib/machine";
 import { scanPackage, type ScanResult } from "@/lib/scan";
 
 /** New packages at or above this score are held for review regardless of
@@ -35,6 +36,12 @@ export interface PublishArgs {
   files: PublishFile[];
   /** Optional "what changed" note for this version. Falls back to CHANGELOG.md's first section. */
   changelog?: string;
+  /** True when the caller authenticated as the OPENAGENTS_MACHINE_SECRET
+   *  principal (`requester.via === "machine"`, see src/lib/machine.ts and
+   *  src/lib/requester.ts). Routes a different, narrower owner check — see
+   *  the `asMachine` branch below — instead of the human "manifest.owner
+   *  matches your handle, or you're an owner/admin of that org" rule. */
+  asMachine?: boolean;
 }
 
 export interface PublishResult {
@@ -201,7 +208,12 @@ function isUniqueViolation(err: unknown): boolean {
   return Boolean(err && typeof err === "object" && "code" in err && (err as { code?: unknown }).code === "23505");
 }
 
-export async function publishPackage({ userHandle, files, changelog }: PublishArgs): Promise<PublishResult> {
+export async function publishPackage({
+  userHandle,
+  files,
+  changelog,
+  asMachine,
+}: PublishArgs): Promise<PublishResult> {
   const db = getDb();
   if (!db) throw new PublishError(503, ["database not configured"]);
 
@@ -226,8 +238,21 @@ export async function publishPackage({ userHandle, files, changelog }: PublishAr
   // keyed by userId, not handle, so the caller's id is looked up from `userHandle`
   // first — this keeps `PublishArgs` unchanged (every existing caller only ever had
   // the handle on hand) rather than threading a new field through every call site.
+  //
+  // The machine principal (asMachine) skips all of that: it may only ever publish
+  // under MACHINE_OWNER_HANDLE, checked by `checkMachineOwner` regardless of
+  // manifest.owner vs. userHandle or the machine's own org role (which is
+  // intentionally kept at "member", not "owner"/"admin" — see src/lib/machine.ts).
+  // This also covers `manifest.owner === userHandle` (a machine publish under its
+  // own user handle "wolfe-factory"), which the human branch below would otherwise
+  // wave through as "publishing under yourself" without the owner-org restriction
+  // ever running.
   let ownerType: "user" | "org" = "user";
-  if (manifest.owner !== userHandle) {
+  if (asMachine) {
+    const check = checkMachineOwner(manifest.owner);
+    if (!check.ok) throw new PublishError(check.status, [check.message]);
+    ownerType = "org";
+  } else if (manifest.owner !== userHandle) {
     const [caller] = await db.select({ id: users.id }).from(users).where(eq(users.handle, userHandle)).limit(1);
     const role = caller ? await getMemberRole(manifest.owner, caller.id) : null;
     if (role !== "owner" && role !== "admin") {
@@ -240,8 +265,11 @@ export async function publishPackage({ userHandle, files, changelog }: PublishAr
 
   // Defense-in-depth: handle derivation (auth.ts) already keeps reserved words and seed
   // catalog owners from being assigned to a user, but a caller could still hand-craft a
-  // manifest with a reserved owner, so re-check it here too (B12a).
-  if (isReservedHandle(manifest.owner)) {
+  // manifest with a reserved owner, so re-check it here too (B12a). Skipped for the
+  // machine principal: MACHINE_OWNER_HANDLE ("wolfe") is itself reserved (exactly so a
+  // human can't claim it — see reserved.ts), and `checkMachineOwner` above has already
+  // guaranteed manifest.owner is that one handle by this point.
+  if (!asMachine && isReservedHandle(manifest.owner)) {
     throw new PublishError(403, ["owner handle is reserved"]);
   }
 

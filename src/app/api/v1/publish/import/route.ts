@@ -6,6 +6,7 @@ import { error, json, preflight } from "@/lib/api";
 import { RATE_LIMITS, withRateLimit } from "@/lib/ratelimit";
 import { publishPackage, PublishError } from "@/lib/publish";
 import { fetchGitHubPackageFiles, GitHubImportError } from "@/lib/github-import";
+import { MACHINE_PRINCIPAL_LABEL } from "@/lib/machine";
 
 export const runtime = "nodejs";
 
@@ -59,7 +60,14 @@ export async function POST(req: NextRequest) {
       userHandle: requester.handle,
       files,
       changelog: parsed.data.changelog,
+      asMachine: requester.via === "machine",
     });
+    // Audit trail for the machine principal: identifies it by the fixed
+    // label below, never by requester.id and never anything derived from
+    // OPENAGENTS_MACHINE_SECRET itself.
+    if (requester.via === "machine") {
+      console.log(`[publish] ${MACHINE_PRINCIPAL_LABEL} imported ${result.id}@${result.version} from ${parsed.data.repo}`);
+    }
     return json(result, { status: 201 });
   } catch (err) {
     if (err instanceof GitHubImportError) {
