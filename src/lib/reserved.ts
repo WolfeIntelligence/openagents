@@ -44,6 +44,13 @@ export const RESERVED_HANDLES: ReadonlySet<string> = new Set([
   "undefined",
   "user",
   "users",
+  // Machine publisher (see src/lib/machine.ts): "wolfe" is the org and
+  // "wolfe-factory" the user handle the OPENAGENTS_MACHINE_SECRET principal
+  // publishes as/under. Reserved so no human signup, rename, or org-create
+  // can claim either out from under it — machine.ts's lazy bootstrap assumes
+  // these handles, when they exist, are its own rows.
+  "wolfe",
+  "wolfe-factory",
   "www",
 ]);
 

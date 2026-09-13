@@ -7,17 +7,27 @@ import { getDb } from "@/lib/db/client";
 import { users } from "@/lib/db/schema";
 import type { Requester } from "@/lib/requester";
 
+/**
+ * ADMIN_HANDLES, parsed into an ordered list: trimmed, lowercased, blanks
+ * dropped, original (not deduped) order preserved. `adminHandleSet` below
+ * only needed a Set, but machine.ts's lazy org bootstrap needs the operator's
+ * declared order too (ownership goes to the *first* listed admin) — kept here
+ * rather than duplicated so the two stay in sync by construction.
+ *
+ * `raw` defaults to the live env var; tests pass it explicitly.
+ */
+export function adminHandleList(raw: string | undefined = process.env.ADMIN_HANDLES): string[] {
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((h) => h.trim().toLowerCase())
+    .filter(Boolean);
+}
+
 /** Comma-separated handles (case-insensitive) granted admin without touching
  *  the database — set once by whoever operates the deployment. */
 function adminHandleSet(): Set<string> {
-  const raw = process.env.ADMIN_HANDLES;
-  if (!raw) return new Set();
-  return new Set(
-    raw
-      .split(",")
-      .map((h) => h.trim().toLowerCase())
-      .filter(Boolean)
-  );
+  return new Set(adminHandleList());
 }
 
 /**

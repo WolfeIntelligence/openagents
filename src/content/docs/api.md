@@ -48,6 +48,42 @@ not allowed to do this. The CLI's `openagents login` stores a token at
 `~/.config/openagents/config.json` (`%APPDATA%\openagents\config.json` on Windows); see
 [CLI Reference](/docs/cli).
 
+## Machine publishers
+
+A trusted automated system can publish and import packages without a person-minted
+token, using a server-side shared secret instead. This deployment uses it for
+**WolfeOS**.
+
+Set the `OPENAGENTS_MACHINE_SECRET` environment variable to a random value of at least
+32 characters. A request sent with that value as the bearer token —
+
+```
+Authorization: Bearer <OPENAGENTS_MACHINE_SECRET>
+```
+
+— is checked against the configured secret in constant time and, on a match, acts as a
+fixed **machine principal**: user handle `wolfe-factory`, scopes `read`, `download`, and
+`publish` only (never `star` or `review`, and — same rule as any other token —
+it can't mint a token of its own via `POST /api/v1/tokens`).
+
+The machine principal may publish or import (`POST /api/v1/publish`,
+`POST /api/v1/publish/import`) only under the owner **`wolfe`**, an organization.
+Any other `owner` in the manifest gets `403 Forbidden`, regardless of the machine
+user's own handle. Both `wolfe` and `wolfe-factory` are reserved handles, so neither
+can be claimed by a human account.
+
+The `wolfe` organization and the `wolfe-factory` user are created automatically,
+server-side, the first time a valid machine request needs them: `wolfe-factory` joins
+as an org member with role `member`, and the org's owner is set to whichever resolves
+first — the first handle listed in `ADMIN_HANDLES`, or, if that's unset or doesn't
+match an existing user, whichever account already holds admin.
+
+Machine requests share the same rate limits as a personal access token making the same
+call. When `OPENAGENTS_MACHINE_SECRET` is unset or shorter than 32 characters, this
+entire path is off and every request behaves exactly as it did before — bearer tokens
+still work, and `Authorization: Bearer <anything else>` is checked against the ordinary
+`oa_...` token table as usual.
+
 ## `GET /api/v1/packages`
 
 List/filter packages — the same query parameters as [`/explore`](/explore).

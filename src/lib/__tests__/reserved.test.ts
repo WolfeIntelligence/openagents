@@ -33,6 +33,10 @@ test("RESERVED_HANDLES: contains the documented static set", () => {
     "undefined",
     "user",
     "users",
+    // Machine publisher (src/lib/machine.ts): the org and user handle the
+    // OPENAGENTS_MACHINE_SECRET principal publishes under/as.
+    "wolfe",
+    "wolfe-factory",
     "www",
   ];
   for (const handle of expected) {
