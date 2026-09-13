@@ -208,6 +208,29 @@ export interface Catalog {
   facets?(query?: CatalogQuery): Promise<FacetCounts>;
 }
 
+/**
+ * One line of `GET /api/v1/catalog.ndjson` (bulk/incremental export): a
+ * manifest summary plus the tarball's download sha256, so a mirror can verify
+ * what it fetched without a second round trip to the download route. See
+ * `src/lib/catalogExport.ts`.
+ */
+export interface CatalogExportEntry {
+  id: string; // "owner/name"
+  owner: string;
+  name: string;
+  kind: PackageKind;
+  title: string;
+  summary: string;
+  version: string;
+  license: string;
+  tags: string[];
+  runtimes: RuntimeId[];
+  pricing: Pricing;
+  updatedAt: string; // ISO
+  /** Hex-encoded sha256 of the same gzip tarball `.../download` serves — see tarball.ts. */
+  downloadSha256: string;
+}
+
 export function toSummary(p: Package): PackageSummary {
   const m = p.manifest;
   return {
