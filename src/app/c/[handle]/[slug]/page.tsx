@@ -35,6 +35,7 @@ function toSummary(pkg: Package): PackageSummary {
     summary: pkg.manifest.summary,
     kind: pkg.manifest.kind,
     tags: pkg.manifest.tags,
+    capabilities: pkg.manifest.capabilities,
     runtimes: pkg.manifest.runtimes,
     pricing: pkg.manifest.pricing,
     version: pkg.manifest.version,

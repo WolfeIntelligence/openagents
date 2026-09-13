@@ -23,6 +23,7 @@ title: Pull Request Reviewer
 summary: One-line description (<= 160 chars)
 license: MIT
 tags: [code-review, github, quality]
+capabilities: [review pull request, summarize diff]
 runtimes: [claude-code, cursor, codex, generic]
 pricing:
   model: free            # free | one-time | subscription
@@ -55,6 +56,7 @@ requires:
 | `summary` | string | yes | One-line description, **≤ 160 characters**. Shown in listings. |
 | `license` | string | yes | Should be an SPDX identifier (e.g. `MIT`, `Apache-2.0`), or the literal string `proprietary` for paid packages that don't grant redistribution rights. |
 | `tags` | string[] | no (default `[]`) | Free-form tags used for filtering/search. Convention: 3–6 tags, lowercase, hyphenated. Search treats hyphens as spaces, so `code-review` also matches the terms `code` and `review` individually — see [API Reference](/docs/api). |
+| `capabilities` | string[] | no (default `[]`) | Short verb phrases naming what the package actually *does*, e.g. `reconcile csv`, `review pull request` — see [Capabilities](#capabilities) below. |
 | `runtimes` | string[] | no (default `[]`) | Which runtimes this package supports. Values from the [runtime id list](/docs/runtimes). Should be non-empty in practice — the install command needs at least one supported runtime. |
 | `pricing` | object | yes (defaults to free) | See **Pricing object** below. |
 | `entry` | string | yes | The main file an agent reads first. Must appear in `files`. |
@@ -72,6 +74,24 @@ requires:
 | `amount_cents` | integer | yes | `0` when `model` is `free`. Must be `> 0` for `one-time`/`subscription` — a paid package with `amount_cents: 0` fails validation. For `subscription`, this is the amount charged **per interval** (e.g. `900` + `interval: month` is $9/month). |
 | `currency` | string | yes | A 3-letter, lowercase ISO 4217 currency code (e.g. `usd`, `eur`, `jpy`) that Stripe also supports — an unrecognized or non-3-letter code is rejected at publish. Zero-decimal currencies (e.g. `jpy`) are charged as whole units: `amount_cents: 500` for a `jpy` package charges ¥500, not ¥5.00. |
 | `interval` | string | only for `subscription` | `month` or `year`. Required whenever `model: subscription`; the registry rejects a subscription manifest with no `interval` (`400 Bad Request`) since Stripe needs a billing period to create the underlying Price. Ignored (and unnecessary) for `free`/`one-time`. |
+
+## Capabilities
+
+`tags` describe a package (topic, category); `capabilities` describe what it *does*,
+as short verb phrases — `reconcile csv`, `review pull request`, `summarize diff`. An
+agent looking for "something that can reconcile a csv" searches on capability, not on
+a tag it would have to guess.
+
+- Each entry must match `^[a-z][a-z0-9]*(?:[ -][a-z0-9]+)*$`: lowercase letters and
+  digits, words separated by a single space or hyphen, no leading/trailing/doubled
+  separators. 2–60 characters. Up to 20 entries.
+- `capabilities` is matched by `q` in [`GET /api/v1/packages`](/docs/api#get-apiv1packages)
+  and [`GET /api/v1/search`](/docs/api#get-apiv1search) alongside name, title, summary,
+  tags, and owner — a hyphenated capability matches its individual words the same way a
+  hyphenated tag does.
+- Shown on the package page (sidebar chips, each linking to a search for that phrase)
+  and returned by the package/list/search/[bulk export](/docs/api#get-apiv1catalogndjson)
+  APIs.
 
 ## Binary files
 
@@ -132,6 +152,8 @@ Rules enforced at publish time:
 - Every path in `files` (and `entry`) exists on disk in the package directory.
 - `runtimes` values are all recognized runtime ids.
 - `inputs[].type` is one of the five allowed input types.
+- `capabilities` has at most 20 entries, each 2–60 characters matching
+  `^[a-z][a-z0-9]*(?:[ -][a-z0-9]+)*$` (lowercase words separated by spaces or hyphens).
 - (Registry only, not the CLI's local `validate`) `files` has at most 200 entries, no
   file over 512 KB, 2 MB total text content, and at most 2 MB total across any binary
   (`encoding: "base64"`) files — see [Binary files](#binary-files); the submitting

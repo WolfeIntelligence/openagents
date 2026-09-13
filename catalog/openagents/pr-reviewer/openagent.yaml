@@ -7,6 +7,7 @@ title: Pull Request Reviewer
 summary: Structured PR review with risk classification, a correctness/security/test/perf checklist, and severity-tagged output
 license: MIT
 tags: [code-review, github, quality, security, testing]
+capabilities: [review pull request, summarize diff, flag security risk]
 runtimes: [claude-code, cursor, codex, generic]
 pricing:
   model: free

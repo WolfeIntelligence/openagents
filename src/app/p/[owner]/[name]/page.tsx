@@ -339,6 +339,23 @@ export default async function PackagePage({
               </SidebarSection>
             )}
 
+            {manifest.capabilities.length > 0 && (
+              <SidebarSection title="Capabilities">
+                <ul className="flex flex-wrap gap-1.5">
+                  {manifest.capabilities.map((capability) => (
+                    <li key={capability}>
+                      <Link
+                        href={`/explore?q=${encodeURIComponent(capability)}`}
+                        className="rounded-full border border-border px-2 py-0.5 text-xs text-fg-muted hover:border-border-strong hover:text-fg"
+                      >
+                        {capability}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </SidebarSection>
+            )}
+
             <SidebarSection title="Runtimes">
               <RuntimeChips runtimes={manifest.runtimes} linkable />
             </SidebarSection>
@@ -588,6 +605,7 @@ function ManifestTab({
     ["entry", manifest.entry],
     ["runtimes", manifest.runtimes.join(", ")],
     ["tags", manifest.tags.join(", ") || "—"],
+    ["capabilities", manifest.capabilities.join(", ") || "—"],
     [
       "pricing",
       manifest.pricing.model === "free"

@@ -179,6 +179,25 @@ describe("scoreDocument (G-S1)", () => {
   test("missing summary/tags/owner are treated as empty, not an error", () => {
     assert.doesNotThrow(() => scoreDocument(["review"], { name: "a", title: "B", updatedAt: "2020-01-01" }));
   });
+
+  test("a capability phrase is matched the same way a tag is", () => {
+    const withCapability = scoreDocument(
+      ["reconcile"],
+      doc({ name: "x", title: "X", tags: [], capabilities: ["reconcile csv"] })
+    );
+    const withoutMatch = scoreDocument(
+      ["reconcile"],
+      doc({ name: "x", title: "X", tags: [], capabilities: ["summarize report"] })
+    );
+    assert.ok(withCapability > 0);
+    assert.equal(withoutMatch, 0);
+  });
+
+  test("missing capabilities is treated as empty, not an error", () => {
+    assert.doesNotThrow(() =>
+      scoreDocument(["review"], { name: "a", title: "B", updatedAt: "2020-01-01", capabilities: undefined })
+    );
+  });
 });
 
 describe("isWithinOneEdit", () => {

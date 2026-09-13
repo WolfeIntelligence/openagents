@@ -250,7 +250,7 @@ function normalizeRelativePath(input: string): string | null {
  *  decides which columns a query term can hit, so `list()` and its retry
  *  pass can't quietly disagree with each other. */
 function fieldsOf(p: PackageSummary): string[] {
-  return [p.title, p.summary, p.name, p.owner, ...p.tags];
+  return [p.title, p.summary, p.name, p.owner, ...p.tags, ...p.capabilities];
 }
 
 type FacetDimension = "kind" | "runtime" | "price" | "tag" | "owner";

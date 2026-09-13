@@ -77,6 +77,9 @@ export interface RankableSummary {
   updatedAt: string; // ISO
   summary?: string;
   tags?: string[];
+  /** Short verb phrases naming what the package does — matched the same way
+   *  tags are (see `Manifest.capabilities` in types.ts). */
+  capabilities?: string[];
   owner?: string;
 }
 
@@ -113,12 +116,16 @@ export function scoreDocument(terms: string[], doc: RankableSummary): number {
   const title = doc.title.toLowerCase();
   const summary = (doc.summary ?? "").toLowerCase();
   const tags = (doc.tags ?? []).map((t) => t.toLowerCase());
+  const capabilities = (doc.capabilities ?? []).map((c) => c.toLowerCase());
   const owner = (doc.owner ?? "").toLowerCase();
   const titleWords = words(title);
   const tagWords = tags.flatMap(words);
+  const capabilityWords = capabilities.flatMap(words);
   const summaryWords = words(summary);
   const tagsJoined = tags.join(" ");
   const tagsSpaced = tagsJoined.replace(/-/g, " ");
+  const capabilitiesJoined = capabilities.join(" ");
+  const capabilitiesSpaced = capabilitiesJoined.replace(/-/g, " ");
 
   let score = 0;
   if (name === terms.join(" ") || name === terms.join("-")) score += SCORE.exactName;
@@ -126,13 +133,17 @@ export function scoreDocument(terms: string[], doc: RankableSummary): number {
   for (const term of terms) {
     if (name.startsWith(term)) score += SCORE.namePrefix;
     if (titleWords.includes(term)) score += SCORE.titleWord;
-    if (summaryWords.includes(term) || tagWords.includes(term)) score += SCORE.summaryOrTagWord;
+    if (summaryWords.includes(term) || tagWords.includes(term) || capabilityWords.includes(term)) {
+      score += SCORE.summaryOrTagWord;
+    }
     if (
       name.includes(term) ||
       title.includes(term) ||
       summary.includes(term) ||
       tagsJoined.includes(term) ||
       tagsSpaced.includes(term) ||
+      capabilitiesJoined.includes(term) ||
+      capabilitiesSpaced.includes(term) ||
       owner.includes(term)
     ) {
       score += SCORE.substring;

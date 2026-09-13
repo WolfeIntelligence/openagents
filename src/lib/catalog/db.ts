@@ -66,6 +66,7 @@ function rowToSummary(row: PackageRow): PackageSummary {
     summary: row.summary,
     kind: row.kind as PackageKind,
     tags: row.tags,
+    capabilities: row.capabilities,
     runtimes: row.runtimes as RuntimeId[],
     pricing: {
       model: row.pricingModel as PricingModel,
@@ -124,6 +125,7 @@ async function rowToPackage(db: Db, row: PackageRow): Promise<Package> {
     summary: row.summary,
     license: row.license,
     tags: row.tags,
+    capabilities: row.capabilities,
     runtimes: row.runtimes as RuntimeId[],
     pricing: {
       model: row.pricingModel as PricingModel,
@@ -246,6 +248,13 @@ function buildWhere(query: CatalogQuery, terms: string[], skip?: FacetDimension)
         sql`EXISTS (
           SELECT 1 FROM jsonb_array_elements_text(${packages.tags}) t
           WHERE t ILIKE ${like} OR REPLACE(t, '-', ' ') ILIKE ${like}
+        )`,
+        // Same treatment for capabilities[] — a phrase like "reconcile csv" is
+        // matched word-by-word the same way a tag is (see fieldsOf/matchesTerms
+        // for the in-memory equivalent this must agree with).
+        sql`EXISTS (
+          SELECT 1 FROM jsonb_array_elements_text(${packages.capabilities}) c
+          WHERE c ILIKE ${like} OR REPLACE(c, '-', ' ') ILIKE ${like}
         )`
       );
     });
@@ -735,5 +744,5 @@ function applySeedDimensionFilter(
  *  module-private; both are one-line and exercised by the shared search
  *  tests via `matchesTerms` itself. */
 function fieldsOf(p: PackageSummary): string[] {
-  return [p.title, p.summary, p.name, p.owner, ...p.tags];
+  return [p.title, p.summary, p.name, p.owner, ...p.tags, ...p.capabilities];
 }

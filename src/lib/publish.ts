@@ -337,6 +337,7 @@ export async function publishPackage({
     summary: manifest.summary,
     license: manifest.license,
     tags: manifest.tags,
+    capabilities: manifest.capabilities,
     runtimes: manifest.runtimes,
     pricingModel: manifest.pricing.model,
     amountCents: manifest.pricing.amountCents,
