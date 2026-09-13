@@ -205,7 +205,10 @@ curl "https://openagents-nu.vercel.app/api/v1/tags"
 
 ## `GET /api/v1/packages/{owner}/{name}`
 
-Fetch one package: full manifest, README, file list, and version history.
+Fetch one package: full manifest, README, file list, and version history. The
+manifest's optional `origin`/`evidence`/`attestedBy` — see
+[Provenance](/docs/package-format#provenance) — come along inside `manifest` like any
+other field; there's no separate provenance endpoint.
 
 ```bash
 curl "https://openagents-nu.vercel.app/api/v1/packages/openagents/pr-reviewer"

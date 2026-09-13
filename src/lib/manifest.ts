@@ -27,6 +27,14 @@ export const CAPABILITY_RE = /^[a-z][a-z0-9]*(?:[ -][a-z0-9]+)*$/;
 export const CAPABILITY_MAX_LEN = 60;
 export const MAX_CAPABILITIES = 20;
 
+/** `origin.commit`: a short or full hex git commit sha. */
+export const COMMIT_SHA_RE = /^[0-9a-f]{7,40}$/;
+export const MAX_EVIDENCE = 20;
+export const EVIDENCE_KIND_MAX_LEN = 40;
+export const EVIDENCE_NOTE_MAX_LEN = 500;
+export const ATTESTATION_NAME_MAX_LEN = 100;
+export const ATTESTATION_RUN_ID_MAX_LEN = 100;
+
 const DEFAULT_PRICING = { model: "free" as const, amount_cents: 0, currency: "usd" };
 
 const rawPricingSchema = z
@@ -51,6 +59,22 @@ const capabilitySchema = z
     CAPABILITY_RE,
     'must be lowercase words separated by spaces or hyphens, e.g. "reconcile csv"'
   );
+
+const rawOriginSchema = z.object({
+  repo: z.string().min(1),
+  commit: z.string().regex(COMMIT_SHA_RE, "must be a hex git commit sha (7-40 chars)"),
+});
+
+const rawEvidenceSchema = z.object({
+  url: z.string().url(),
+  kind: z.string().min(1).max(EVIDENCE_KIND_MAX_LEN),
+  note: z.string().max(EVIDENCE_NOTE_MAX_LEN).optional(),
+});
+
+const rawAttestationSchema = z.object({
+  name: z.string().min(1).max(ATTESTATION_NAME_MAX_LEN),
+  run_id: z.string().min(1).max(ATTESTATION_RUN_ID_MAX_LEN).optional(),
+});
 
 const rawInputSchema = z.object({
   name: z.string().min(1),
@@ -79,6 +103,9 @@ const rawManifestSchema = z.object({
   capabilities: z.array(capabilitySchema).max(MAX_CAPABILITIES).default([]),
   homepage: z.string().url().optional(),
   repository: z.string().url().optional(),
+  origin: rawOriginSchema.optional(),
+  evidence: z.array(rawEvidenceSchema).max(MAX_EVIDENCE).optional(),
+  attested_by: rawAttestationSchema.optional(),
 });
 
 /**
@@ -116,6 +143,11 @@ export const manifestSchema = rawManifestSchema.transform(
     capabilities: m.capabilities,
     homepage: m.homepage,
     repository: m.repository,
+    origin: m.origin,
+    evidence: m.evidence,
+    attestedBy: m.attested_by
+      ? { name: m.attested_by.name, runId: m.attested_by.run_id }
+      : undefined,
   })
 );
 

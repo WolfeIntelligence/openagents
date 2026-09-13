@@ -392,6 +392,77 @@
           "repository": {
             "type": "string",
             "format": "uri"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/ManifestOrigin"
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManifestEvidence"
+            },
+            "maxItems": 20
+          },
+          "attestedBy": {
+            "$ref": "#/components/schemas/ManifestAttestation"
+          }
+        }
+      },
+      "ManifestOrigin": {
+        "type": "object",
+        "description": "Where this package's content originally came from, when it wasn't authored directly against this registry.",
+        "required": [
+          "repo",
+          "commit"
+        ],
+        "properties": {
+          "repo": {
+            "type": "string",
+            "description": "\"owner/repo\" or a full URL — any git host."
+          },
+          "commit": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{7,40}$"
+          }
+        }
+      },
+      "ManifestEvidence": {
+        "type": "object",
+        "required": [
+          "url",
+          "kind"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "kind": {
+            "type": "string",
+            "maxLength": 40,
+            "description": "Free-form, e.g. \"repo\", \"benchmark\", \"citation\", \"test-run\", \"scan\"."
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 500
+          }
+        }
+      },
+      "ManifestAttestation": {
+        "type": "object",
+        "description": "Who (agent or person) actually ran the publish, distinct from `owner`.",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "runId": {
+            "type": "string",
+            "maxLength": 100,
+            "description": "Identifies the specific run that produced this publish, for an automated agent."
           }
         }
       },

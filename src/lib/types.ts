@@ -56,6 +56,40 @@ export interface Manifest {
   capabilities: string[];
   homepage?: string;
   repository?: string;
+  /** Where this package's content originally came from, when it wasn't
+   *  authored directly against this registry (e.g. the scout importing an
+   *  existing skill and republishing it under `wolfe`). See ProvenanceEvidence. */
+  origin?: ManifestOrigin;
+  /** Supporting links for why this package is trustworthy/fit for purpose —
+   *  a benchmark, a citation, a test run, the repo it was scanned from. */
+  evidence?: ManifestEvidence[];
+  /** Who (agent or person) actually ran the publish, distinct from `owner`
+   *  (the package's identity) — e.g. a crew agent publishing under an
+   *  organization it's a member of. */
+  attestedBy?: ManifestAttestation;
+}
+
+export interface ManifestOrigin {
+  /** Source repository, as "owner/repo" or a full URL — any git host, not
+   *  just GitHub (contrast with the GitHub-only auto-sync in sources.ts). */
+  repo: string;
+  /** Commit sha (short or full hex) the published content was taken from. */
+  commit: string;
+}
+
+export interface ManifestEvidence {
+  url: string;
+  /** Free-form, e.g. "repo", "benchmark", "citation", "test-run", "scan". */
+  kind: string;
+  note?: string;
+}
+
+export interface ManifestAttestation {
+  /** Agent name (e.g. "scout", "wolfe-factory") or a person's handle. */
+  name: string;
+  /** Identifies the specific run that produced this publish, when the
+   *  publisher is an automated agent (e.g. a WolfeOS factory run id). */
+  runId?: string;
 }
 
 export interface PackageFile {

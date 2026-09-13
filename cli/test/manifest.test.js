@@ -59,3 +59,59 @@ describe("validateManifest — capabilities", () => {
     assert.ok(issues.some((i) => i.includes("at most 20 entries")));
   });
 });
+
+describe("validateManifest — provenance (origin/evidence/attested_by)", () => {
+  test("all three are optional", () => {
+    assert.deepEqual(validateManifest(baseManifest()), []);
+  });
+
+  test("a well-formed origin is valid", () => {
+    const issues = validateManifest(
+      baseManifest({ origin: { repo: "github.com/acme/demo", commit: "4b825dc642cb6eb9a060e54bf8d69288fbee4904" } })
+    );
+    assert.deepEqual(issues, []);
+  });
+
+  test("rejects a non-hex origin.commit", () => {
+    const issues = validateManifest(baseManifest({ origin: { repo: "acme/demo", commit: "not-hex" } }));
+    assert.ok(issues.some((i) => i.startsWith("origin.commit")));
+  });
+
+  test("rejects origin missing repo", () => {
+    const issues = validateManifest(baseManifest({ origin: { commit: "4b825dc" } }));
+    assert.ok(issues.some((i) => i.startsWith("origin.repo")));
+  });
+
+  test("a well-formed evidence list is valid", () => {
+    const issues = validateManifest(
+      baseManifest({ evidence: [{ url: "https://example.com/repo", kind: "repo", note: "source" }] })
+    );
+    assert.deepEqual(issues, []);
+  });
+
+  test("rejects an evidence entry with a bad url", () => {
+    const issues = validateManifest(baseManifest({ evidence: [{ url: "not-a-url", kind: "repo" }] }));
+    assert.ok(issues.some((i) => i.startsWith("evidence[0].url")));
+  });
+
+  test("rejects more than 20 evidence entries", () => {
+    const evidence = Array.from({ length: 21 }, (_, i) => ({ url: `https://example.com/${i}`, kind: "repo" }));
+    const issues = validateManifest(baseManifest({ evidence }));
+    assert.ok(issues.some((i) => i.includes("at most 20 entries")));
+  });
+
+  test("a well-formed attested_by is valid", () => {
+    const issues = validateManifest(baseManifest({ attested_by: { name: "scout", run_id: "run_1" } }));
+    assert.deepEqual(issues, []);
+  });
+
+  test("attested_by.run_id is optional", () => {
+    const issues = validateManifest(baseManifest({ attested_by: { name: "scout" } }));
+    assert.deepEqual(issues, []);
+  });
+
+  test("rejects attested_by with no name", () => {
+    const issues = validateManifest(baseManifest({ attested_by: { run_id: "run_1" } }));
+    assert.ok(issues.some((i) => i.startsWith("attested_by.name")));
+  });
+});
