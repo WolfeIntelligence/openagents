@@ -20,6 +20,13 @@ export const NAME_RE = /^[a-z0-9-]{2,64}$/;
 export const SEMVER_RE =
   /^\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 
+/** `capabilities[]` entries: lowercase words (letters/digits) separated by single
+ *  spaces or hyphens — a short verb phrase like "reconcile csv" or "review-pull-request",
+ *  not free-form text. No leading/trailing/doubled separators. */
+export const CAPABILITY_RE = /^[a-z][a-z0-9]*(?:[ -][a-z0-9]+)*$/;
+export const CAPABILITY_MAX_LEN = 60;
+export const MAX_CAPABILITIES = 20;
+
 const DEFAULT_PRICING = { model: "free" as const, amount_cents: 0, currency: "usd" };
 
 const rawPricingSchema = z
@@ -35,6 +42,15 @@ const rawPricingSchema = z
     message: 'paid packages (pricing.model != "free") must have amount_cents > 0',
     path: ["amount_cents"],
   });
+
+const capabilitySchema = z
+  .string()
+  .min(2)
+  .max(CAPABILITY_MAX_LEN, `must be <= ${CAPABILITY_MAX_LEN} chars`)
+  .regex(
+    CAPABILITY_RE,
+    'must be lowercase words separated by spaces or hyphens, e.g. "reconcile csv"'
+  );
 
 const rawInputSchema = z.object({
   name: z.string().min(1),
@@ -60,6 +76,7 @@ const rawManifestSchema = z.object({
   files: z.array(z.string()).default([]),
   inputs: z.array(rawInputSchema).default([]),
   requires: z.array(z.string()).default([]),
+  capabilities: z.array(capabilitySchema).max(MAX_CAPABILITIES).default([]),
   homepage: z.string().url().optional(),
   repository: z.string().url().optional(),
 });
@@ -96,6 +113,7 @@ export const manifestSchema = rawManifestSchema.transform(
       default: i.default,
     })),
     requires: m.requires,
+    capabilities: m.capabilities,
     homepage: m.homepage,
     repository: m.repository,
   })

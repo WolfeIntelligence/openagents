@@ -376,6 +376,15 @@
             },
             "description": "\"owner/name@range\" dependencies. Resolved (with transitive requires, cycle/conflict reporting) by CLI 0.3.0's `add`; not auto-installed server-side."
           },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9]*(?:[ -][a-z0-9]+)*$"
+            },
+            "maxItems": 20,
+            "description": "Short verb phrases naming what the package does, e.g. \"reconcile csv\". Matched by `q` in GET /api/v1/packages and GET /api/v1/search, alongside tags/title/summary/name."
+          },
           "homepage": {
             "type": "string",
             "format": "uri"
@@ -396,6 +405,7 @@
           "summary",
           "kind",
           "tags",
+          "capabilities",
           "runtimes",
           "pricing",
           "version",
@@ -437,6 +447,13 @@
             "items": {
               "type": "string"
             }
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "See Manifest.capabilities."
           },
           "runtimes": {
             "type": "array",
@@ -669,6 +686,7 @@
           "version",
           "license",
           "tags",
+          "capabilities",
           "runtimes",
           "pricing",
           "updatedAt",
@@ -711,6 +729,13 @@
             "items": {
               "type": "string"
             }
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "See Manifest.capabilities."
           },
           "runtimes": {
             "type": "array",
@@ -1683,7 +1708,8 @@
             "in": "query",
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "Matched against name, title, summary, owner, tags, and capabilities."
           },
           {
             "name": "kind",
@@ -2777,7 +2803,7 @@
         "tags": [
           "search"
         ],
-        "summary": "Full-text search across name, title, summary, tags, owner",
+        "summary": "Full-text search across name, title, summary, tags, capabilities, owner",
         "parameters": [
           {
             "name": "q",
@@ -2785,7 +2811,8 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "Matched against name, title, summary, owner, tags, and capabilities."
           },
           {
             "name": "limit",

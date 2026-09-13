@@ -23,6 +23,7 @@ export function toCatalogExportEntry(pkg: Package, downloadSha256: string): Cata
     version: pkg.manifest.version,
     license: pkg.manifest.license,
     tags: pkg.manifest.tags,
+    capabilities: pkg.manifest.capabilities,
     runtimes: pkg.manifest.runtimes,
     pricing: pkg.manifest.pricing,
     updatedAt: pkg.updatedAt,

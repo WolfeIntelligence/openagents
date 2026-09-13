@@ -19,6 +19,11 @@ export const PRICING_MODELS = ["free", "one-time", "subscription"];
 export const NAME_RE = /^[a-z0-9-]{2,64}$/;
 export const SEMVER_RE =
   /^\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+/** Short verb phrases in `capabilities[]`, e.g. "reconcile csv" — see
+ *  src/content/docs/package-format.md#capabilities in the site repo. */
+export const CAPABILITY_RE = /^[a-z][a-z0-9]*(?:[ -][a-z0-9]+)*$/;
+export const CAPABILITY_MAX_LEN = 60;
+export const MAX_CAPABILITIES = 20;
 
 /** Parse `openagent.yaml` text into the raw (snake_case) manifest object. */
 export function parseManifest(yamlText) {
@@ -91,6 +96,20 @@ export function validateManifest(m) {
 
   if (m.requires !== undefined) {
     req(Array.isArray(m.requires), "requires: must be a list when present");
+  }
+
+  if (m.capabilities !== undefined) {
+    if (!Array.isArray(m.capabilities)) {
+      issues.push("capabilities: must be a list when present");
+    } else {
+      req(m.capabilities.length <= MAX_CAPABILITIES, `capabilities: at most ${MAX_CAPABILITIES} entries`);
+      m.capabilities.forEach((c, i) => {
+        req(
+          typeof c === "string" && c.length <= CAPABILITY_MAX_LEN && CAPABILITY_RE.test(c),
+          `capabilities[${i}]: must be lowercase words separated by spaces or hyphens (<= ${CAPABILITY_MAX_LEN} chars), e.g. "reconcile csv"`
+        );
+      });
+    }
   }
 
   return issues;

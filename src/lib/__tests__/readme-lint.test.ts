@@ -20,6 +20,7 @@ function makeManifest(overrides: Partial<Manifest> = {}): Manifest {
     files: ["WORKFLOW.md"],
     inputs: [],
     requires: [],
+    capabilities: [],
     homepage: "https://example.com",
     ...overrides,
   };

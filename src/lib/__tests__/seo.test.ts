@@ -51,6 +51,7 @@ function makePackage(overrides: Partial<Package> = {}): Package {
       files: [],
       inputs: [],
       requires: [],
+      capabilities: [],
     },
     readme: "",
     files: [],

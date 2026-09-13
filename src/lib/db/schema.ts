@@ -108,10 +108,10 @@ export const verificationTokens = pgTable(
  * indexed expression byte-for-byte, so this function is the single source of
  * truth for both sides; never inline this expression again elsewhere.
  *
- * Tags are folded in as the jsonb's text form (`["a","b"]`) rather than via a
- * `jsonb_array_elements_text` subquery: index expressions must be immutable and
- * may not contain subqueries, and `to_tsvector` drops the brackets and quotes
- * anyway, so the tokens are the same.
+ * Tags and capabilities are folded in as each jsonb's text form (`["a","b"]`)
+ * rather than via a `jsonb_array_elements_text` subquery: index expressions
+ * must be immutable and may not contain subqueries, and `to_tsvector` drops
+ * the brackets and quotes anyway, so the tokens are the same.
  */
 export function packagesFtsExpression(t: {
   title: PgColumn;
@@ -119,13 +119,15 @@ export function packagesFtsExpression(t: {
   name: PgColumn;
   owner: PgColumn;
   tags: PgColumn;
+  capabilities: PgColumn;
 }) {
   return sql`to_tsvector('english',
       coalesce(${t.title}, '') || ' ' ||
       coalesce(${t.summary}, '') || ' ' ||
       ${t.name} || ' ' ||
       ${t.owner} || ' ' ||
-      coalesce(${t.tags}::text, '')
+      coalesce(${t.tags}::text, '') || ' ' ||
+      coalesce(${t.capabilities}::text, '')
     )`;
 }
 
@@ -140,6 +142,10 @@ export const packages = pgTable(
     summary: text("summary").notNull(),
     license: text("license").notNull(),
     tags: jsonb("tags").$type<string[]>().notNull().default([]),
+    /** Short verb phrases naming what the package does (e.g. "reconcile csv"),
+     *  matched by `q` alongside tags/title/summary — see CAPABILITY_RE in
+     *  src/lib/manifest.ts. */
+    capabilities: jsonb("capabilities").$type<string[]>().notNull().default([]),
     runtimes: jsonb("runtimes").$type<string[]>().notNull().default([]),
     pricingModel: text("pricingModel").notNull(), // PricingModel
     amountCents: integer("amountCents").notNull().default(0),

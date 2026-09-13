@@ -49,6 +49,11 @@ export interface Manifest {
   files: string[];
   inputs: PackageInput[];
   requires: string[]; // "owner/name@range"
+  /** Short verb phrases naming what this package actually does, e.g.
+   *  "reconcile csv", "review pull request" — matched by `q` in
+   *  /api/v1/packages and /api/v1/search, alongside tags/title/summary/name.
+   *  See CAPABILITY_RE in manifest.ts for the accepted format. */
+  capabilities: string[];
   homepage?: string;
   repository?: string;
 }
@@ -114,6 +119,8 @@ export type PackageSummary = Pick<
   summary: string;
   kind: PackageKind;
   tags: string[];
+  /** See `Manifest.capabilities`. */
+  capabilities: string[];
   runtimes: RuntimeId[];
   pricing: Pricing;
   version: string;
@@ -224,6 +231,7 @@ export interface CatalogExportEntry {
   version: string;
   license: string;
   tags: string[];
+  capabilities: string[];
   runtimes: RuntimeId[];
   pricing: Pricing;
   updatedAt: string; // ISO
@@ -241,6 +249,7 @@ export function toSummary(p: Package): PackageSummary {
     summary: m.summary,
     kind: m.kind,
     tags: m.tags,
+    capabilities: m.capabilities,
     runtimes: m.runtimes,
     pricing: m.pricing,
     version: m.version,

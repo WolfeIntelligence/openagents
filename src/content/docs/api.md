@@ -94,9 +94,12 @@ List/filter packages — the same query parameters as [`/explore`](/explore).
 (`downloads`\|`stars`\|`updated`\|`name`\|`trending`), `limit` (default `24`, max
 `100`), `offset`, `facets` (set to `1` to include the `facets` field below).
 
-`q` is tokenized against Postgres full-text search when the database is enabled
-(falling back to the same substring/hyphen-aware matching as seed mode otherwise),
-ranked by relevance. A `q` with no close matches gets typo-corrected before matching —
+`q` matches against name, title, summary, owner, tags, and
+[`capabilities`](/docs/package-format#capabilities) — a package's declared
+`capabilities: [reconcile csv]` is found by a search for "reconcile" or "csv" the
+same way a tag would be. It's tokenized against Postgres full-text search when the
+database is enabled (falling back to the same substring/hyphen-aware matching as seed
+mode otherwise), ranked by relevance. A `q` with no close matches gets typo-corrected before matching —
 when that happens, the response includes `correctedQuery` so a client can show
 "Showing results for X" the way a search engine would. `sort=trending` ranks by unique
 downloads over the trailing 7 days rather than lifetime totals — good for surfacing
@@ -119,6 +122,7 @@ curl "https://openagents-nu.vercel.app/api/v1/packages?kind=workflow&price=free&
     summary: string;
     kind: "workflow" | "harness" | "rules" | "skill";
     tags: string[];
+    capabilities: string[]; // short verb phrases, e.g. "reconcile csv" — see Package Format
     runtimes: string[];
     pricing: { model: "free" | "one-time" | "subscription"; amountCents: number; currency: string };
     version: string;
@@ -177,6 +181,7 @@ curl "https://openagents-nu.vercel.app/api/v1/catalog.ndjson?since=2026-09-01T00
   version: string;
   license: string;
   tags: string[];
+  capabilities: string[];
   runtimes: string[];
   pricing: { model: "free" | "one-time" | "subscription"; amountCents: number; currency: string };
   updatedAt: string;       // ISO date
@@ -585,9 +590,9 @@ machine repeatedly in one day counts once.
 
 ## `GET /api/v1/search`
 
-Full-text search across name, title, summary, tags, and owner — the same matching and
-ranking behavior as `q` on [`/api/v1/packages`](#get-apiv1packages), scoped to a
-smaller, search-focused response.
+Full-text search across name, title, summary, tags, capabilities, and owner — the
+same matching and ranking behavior as `q` on [`/api/v1/packages`](#get-apiv1packages),
+scoped to a smaller, search-focused response.
 
 ```bash
 curl "https://openagents-nu.vercel.app/api/v1/search?q=code+review"

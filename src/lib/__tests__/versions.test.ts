@@ -113,6 +113,7 @@ function fakeManifest(): Manifest {
     files: ["SKILL.md", "lib/helper.md"],
     inputs: [],
     requires: [],
+    capabilities: [],
   };
 }
 
