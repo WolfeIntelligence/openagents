@@ -73,7 +73,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const pkg = await catalog.get(row.owner, row.name);
     if (!pkg) throw new Error(`linked package not found: ${row.owner}/${row.name}`);
 
-    const files = await fetchGitHubPackageFiles(repoUrl(row.repo), decision.ref, row.subdir ?? undefined);
+    const { files } = await fetchGitHubPackageFiles(repoUrl(row.repo), decision.ref, row.subdir ?? undefined);
     const manifestFile = files.find((f) => f.path === "openagent.yaml");
     if (!manifestFile) throw new Error("openagent.yaml missing from the imported files");
     const manifest = parseManifest(manifestFile.content);

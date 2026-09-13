@@ -58,7 +58,7 @@ export async function POST(
   }
 
   try {
-    const files = await fetchGitHubPackageFiles(repoUrl(row.repo), row.ref ?? undefined, row.subdir ?? undefined);
+    const { files } = await fetchGitHubPackageFiles(repoUrl(row.repo), row.ref ?? undefined, row.subdir ?? undefined);
     const result = await publishPackage({ userHandle: pkg.owner, files });
     const message = `published ${result.version}`;
     await recordSyncResult(row.id, message);
