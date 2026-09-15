@@ -2,12 +2,16 @@ import { redirect } from "next/navigation";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { auth } from "@/lib/auth";
-import { isDbEnabled } from "@/lib/db/client";
+import { getDb, isDbEnabled } from "@/lib/db/client";
 import { getCatalog } from "@/lib/catalog";
 import { CATALOG_ALL_LIMIT } from "@/lib/types";
-import { getOrgByHandle, listOrgsForMember } from "@/lib/orgs";
+import { getOrgByHandle, getOrgPayoutStatus, listOrgsForMember, type OrgPayoutStatus } from "@/lib/orgs";
+import { getConnectedAccountStatus, isStripeEnabled } from "@/lib/stripe";
+import { organizations } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 import { OrgCard } from "@/components/OrgCard";
 import { OrgMembers } from "@/components/OrgMembers";
+import { OrgPayouts } from "@/components/OrgPayouts";
 import { TransferPackage, type TransferDestination, type TransferablePackage } from "@/components/TransferPackage";
 import { CreateOrgForm } from "./CreateOrgForm";
 
@@ -16,7 +20,13 @@ export const metadata: Metadata = {
   description: "Create and manage organizations, and transfer packages between them.",
 };
 
-export default async function OrgsSettingsPage() {
+interface OrgsSettingsPageProps {
+  searchParams: Promise<{ connected?: string; refresh?: string }>;
+}
+
+export default async function OrgsSettingsPage({ searchParams }: OrgsSettingsPageProps) {
+  const { connected, refresh } = await searchParams;
+
   const session = await auth();
   if (!session?.user?.id) {
     redirect("/signin?callbackUrl=/settings/orgs");
@@ -43,6 +53,50 @@ export default async function OrgsSettingsPage() {
     handle: m.handle,
     displayName: m.displayName,
   }));
+
+  const stripeEnabled = isStripeEnabled();
+  const managedHandles = new Set(managedOrgs.map((m) => m.handle));
+
+  // Same eager-refresh reasoning as /settings/payouts: the webhook (v2 thin
+  // events) is the source of truth long-term, but it may not have landed yet
+  // when Stripe bounces the owner/admin straight back here from onboarding.
+  // Only ever refreshes an org the caller actually manages — `connected`/
+  // `refresh` are just query params, not proof of anything on their own.
+  const justConnectedHandle = connected && managedHandles.has(connected) ? connected : undefined;
+  if (justConnectedHandle && stripeEnabled) {
+    const db = getDb();
+    if (db) {
+      const [org] = await db
+        .select({ stripeAccountId: organizations.stripeAccountId, stripeOnboarded: organizations.stripeOnboarded })
+        .from(organizations)
+        .where(eq(organizations.handle, justConnectedHandle))
+        .limit(1);
+      if (org?.stripeAccountId) {
+        try {
+          const status = await getConnectedAccountStatus(org.stripeAccountId);
+          if (status.onboarded !== org.stripeOnboarded) {
+            await db
+              .update(organizations)
+              .set({ stripeOnboarded: status.onboarded })
+              .where(eq(organizations.handle, justConnectedHandle));
+          }
+        } catch {
+          // Stripe lookup failed — the freshly-fetched status below just falls
+          // back to whatever's already in the DB, same as /settings/payouts.
+        }
+      }
+    }
+  }
+
+  const payoutStatusByHandle = new Map<string, OrgPayoutStatus>();
+  if (stripeEnabled) {
+    await Promise.all(
+      managedOrgs.map(async (m) => {
+        const status = await getOrgPayoutStatus(m.handle);
+        if (status) payoutStatusByHandle.set(m.handle, status);
+      })
+    );
+  }
 
   // Transferable packages: the caller's own (personally-owned) published
   // packages, plus any owned by an org they manage — either can move to
@@ -75,23 +129,36 @@ export default async function OrgsSettingsPage() {
             <p className="text-sm text-fg-muted">You&apos;re not a member of any organization yet.</p>
           ) : (
             <div className="flex flex-col gap-6">
-              {orgDetails.map((org, i) =>
-                org ? (
+              {orgDetails.map((org, i) => {
+                if (!org) return null;
+                const role = memberships[i]?.role ?? null;
+                const manages = role === "owner" || role === "admin";
+                return (
                   <div key={org.handle} className="flex flex-col gap-3 rounded-lg border border-border p-4 sm:flex-row">
                     <div className="sm:w-64 sm:shrink-0">
-                      <OrgCard org={org} role={memberships[i]?.role} />
+                      <OrgCard org={org} role={role ?? undefined} />
                     </div>
                     <div className="min-w-0 flex-1">
                       <OrgMembers
                         orgHandle={org.handle}
                         initialMembers={org.members}
                         viewerHandle={viewerHandle}
-                        viewerRole={memberships[i]?.role ?? null}
+                        viewerRole={role}
                       />
+                      {manages && stripeEnabled && (
+                        <div className="mt-4 border-t border-border pt-4">
+                          <OrgPayouts
+                            orgHandle={org.handle}
+                            status={payoutStatusByHandle.get(org.handle) ?? null}
+                            justConnected={justConnectedHandle === org.handle}
+                            justExpired={refresh === org.handle}
+                          />
+                        </div>
+                      )}
                     </div>
                   </div>
-                ) : null
-              )}
+                );
+              })}
             </div>
           )}
         </section>
