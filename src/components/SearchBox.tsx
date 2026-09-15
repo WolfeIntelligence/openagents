@@ -3,7 +3,7 @@
 import { useEffect, useId, useState, type KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
 import { SearchSuggestions, getSuggestionOptionId } from "@/components/SearchSuggestions";
-import { createSuggestionFetcher, type SuggestItem } from "@/lib/search-client";
+import { createSuggestionFetcher, suggestionAnnouncement, type SuggestItem } from "@/lib/search-client";
 
 interface SearchBoxProps {
   defaultValue?: string;
@@ -36,6 +36,7 @@ export function SearchBox({
   const [total, setTotal] = useState(0);
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
+  const [announcement, setAnnouncement] = useState("");
 
   // Lazy initializer keeps this a single stable instance for the component's
   // lifetime without touching a ref during render (refs are for imperative
@@ -53,6 +54,7 @@ export function SearchBox({
     setValue(next);
     setActiveIndex(-1);
     fetcher.fetchSuggestions(next, (result) => {
+      setAnnouncement(suggestionAnnouncement(result));
       if (!result || result.items.length === 0) {
         setItems([]);
         setTotal(0);
@@ -156,6 +158,9 @@ export function SearchBox({
             isLg ? "py-3.5 pl-11 pr-4 text-base" : "py-2 pl-9 pr-3 text-sm"
           }`}
         />
+        <div aria-live="polite" role="status" className="sr-only">
+          {open ? announcement : ""}
+        </div>
         {open && items.length > 0 && (
           <SearchSuggestions
             listboxId={listboxId}

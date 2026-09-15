@@ -458,6 +458,14 @@ export const organizations = pgTable("organizations", {
   avatarUrl: text("avatarUrl"),
   createdByUserId: text("createdByUserId").references(() => users.id, { onDelete: "set null" }),
   createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
+  // Stripe Connect for org-owned paid packages — mirrors users.stripeAccountId/
+  // stripeOnboarded above. An org has its own connected account rather than
+  // routing payouts through whichever member happens to publish, so anyone who
+  // ever leaves the org doesn't take the payout account with them. See
+  // src/lib/stripe.ts's `resolveSellerAccount` for the (owner, ownerType) ->
+  // account lookup this backs.
+  stripeAccountId: text("stripeAccountId"),
+  stripeOnboarded: boolean("stripeOnboarded").notNull().default(false),
 });
 
 export const organizationMembers = pgTable(

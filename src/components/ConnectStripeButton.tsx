@@ -5,9 +5,14 @@ import { useState } from "react";
 export function ConnectStripeButton({
   label,
   className = "",
+  org,
 }: {
   label: string;
   className?: string;
+  /** Onboard this organization's shared payout account instead of the
+   *  signed-in user's own — only an owner/admin of it may (enforced by the
+   *  route; a rejection surfaces as the same generic "error" state below). */
+  org?: string;
 }) {
   const [status, setStatus] = useState<
     "idle" | "loading" | "unconfigured" | "unauthorized" | "error"
@@ -16,7 +21,11 @@ export function ConnectStripeButton({
   async function handleClick() {
     setStatus("loading");
     try {
-      const res = await fetch("/api/connect/onboard", { method: "POST" });
+      const res = await fetch("/api/connect/onboard", {
+        method: "POST",
+        headers: org ? { "Content-Type": "application/json" } : undefined,
+        body: org ? JSON.stringify({ org }) : undefined,
+      });
       if (res.status === 503) {
         setStatus("unconfigured");
         return;

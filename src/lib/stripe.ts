@@ -5,7 +5,7 @@
 import Stripe from "stripe";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
-import { packages, users } from "@/lib/db/schema";
+import { organizations, packages, users } from "@/lib/db/schema";
 import type { Package } from "@/lib/types";
 import { isSupportedCurrency } from "@/lib/format";
 
@@ -53,6 +53,55 @@ export interface CreateCheckoutSessionArgs {
 }
 
 type Db = NonNullable<ReturnType<typeof getDb>>;
+
+export interface SellerAccount {
+  stripeAccountId: string | null;
+  stripeOnboarded: boolean;
+}
+
+/**
+ * Whether a connected account can actually receive a destination charge or
+ * transfer right now — it exists AND has finished onboarding. This is the one
+ * gate shared by the publish-time check (`publish.ts`) and the checkout-time
+ * lookup below, so the two can't drift the way they used to: publish-time
+ * used to check whichever *user* was doing the publishing, while checkout
+ * looked up `users` by `pkg.owner` — which is an organization's handle for an
+ * org-owned package, so it could never match a user row at all. Both call
+ * sites now resolve the same `SellerAccount` via `resolveSellerAccount` below
+ * and gate on this one function.
+ */
+export function canReceivePayments(account: SellerAccount | null | undefined): boolean {
+  return Boolean(account?.stripeAccountId && account.stripeOnboarded);
+}
+
+/**
+ * Resolves the Stripe Connect account backing `owner`: the `users` row for a
+ * personally-owned package (`ownerType` "user", or absent — every package
+ * predates organizations existing), the `organizations` row for an org-owned
+ * one. Null when no such user/org exists (shouldn't happen for a package
+ * that's actually in the DB with a valid owner, but this stays a lookup
+ * rather than a throw so callers can produce their own error message).
+ */
+export async function resolveSellerAccount(
+  db: Db,
+  owner: string,
+  ownerType: "user" | "org" | undefined
+): Promise<SellerAccount | null> {
+  if (ownerType === "org") {
+    const [org] = await db
+      .select({ stripeAccountId: organizations.stripeAccountId, stripeOnboarded: organizations.stripeOnboarded })
+      .from(organizations)
+      .where(eq(organizations.handle, owner))
+      .limit(1);
+    return org ?? null;
+  }
+  const [user] = await db
+    .select({ stripeAccountId: users.stripeAccountId, stripeOnboarded: users.stripeOnboarded })
+    .from(users)
+    .where(eq(users.handle, owner))
+    .limit(1);
+  return user ?? null;
+}
 
 /** Returns the buyer's Stripe Customer id, creating one (with their account email) the
  *  first time they check out for a subscription and persisting it to `users.
@@ -104,10 +153,12 @@ export async function createCheckoutSession({
   const db = getDb();
   if (!stripe || !db) throw new Error("payments not configured");
 
-  const [seller] = await db.select().from(users).where(eq(users.handle, pkg.owner)).limit(1);
-  if (!seller?.stripeAccountId || !seller.stripeOnboarded) {
+  const seller = await resolveSellerAccount(db, pkg.owner, pkg.ownerType);
+  if (!canReceivePayments(seller)) {
     throw new Error(`seller ${pkg.owner} has not completed payments onboarding`);
   }
+  // Narrowed by canReceivePayments above (stripeAccountId is non-null whenever it's true).
+  const sellerAccountId = seller!.stripeAccountId!;
 
   // `pkg.id` (from src/lib/types.ts) is the "owner/name" composite id used across the
   // app — NOT the DB row's uuid primary key that purchases.packageId (a uuid FK)
@@ -157,7 +208,7 @@ export async function createCheckoutSession({
       ],
       subscription_data: {
         application_fee_percent: PLATFORM_FEE_BPS / 100,
-        transfer_data: { destination: seller.stripeAccountId },
+        transfer_data: { destination: sellerAccountId },
         metadata,
       },
       success_url: successUrl,
@@ -188,7 +239,7 @@ export async function createCheckoutSession({
     ],
     payment_intent_data: {
       application_fee_amount: applicationFeeAmount,
-      transfer_data: { destination: seller.stripeAccountId },
+      transfer_data: { destination: sellerAccountId },
     },
     success_url: successUrl,
     cancel_url: cancelUrl,
@@ -206,19 +257,24 @@ export async function createCheckoutSession({
   return { url: session.url };
 }
 
-/** Creates (if needed) a Stripe **Accounts v2** connected account for the user, configured
- *  as a `recipient` (we run destination charges from `createCheckoutSession` — the
- *  platform collects the card payment and transfers the seller's share via
- *  `transfer_data.destination` + `application_fee_amount`, so the connected account never
- *  needs to be the merchant of record) with an Express dashboard, and returns an
- *  onboarding link URL. `refreshUrl` is where Stripe sends the user back if the link
- *  itself expired (defaults to `returnUrl` when omitted); `returnUrl` is where they land
- *  after completing (or exiting) the flow. Throws if Stripe/DB aren't configured.
+/** Who a Connect onboarding link is for — a person's own payout account, or an
+ *  organization's shared one (owner/admin-gated at the route level; see
+ *  `/api/connect/onboard`). */
+export type ConnectOwner = { kind: "user"; userId: string } | { kind: "org"; orgHandle: string };
+
+/** Creates (if needed) a Stripe **Accounts v2** connected account for `owner` — a user or
+ *  an organization — configured as a `recipient` (we run destination charges from
+ *  `createCheckoutSession` — the platform collects the card payment and transfers the
+ *  seller's share via `transfer_data.destination` + `application_fee_amount`, so the
+ *  connected account never needs to be the merchant of record) with an Express dashboard,
+ *  and returns an onboarding link URL. `refreshUrl` is where Stripe sends the user back if
+ *  the link itself expired (defaults to `returnUrl` when omitted); `returnUrl` is where
+ *  they land after completing (or exiting) the flow. Throws if Stripe/DB aren't configured.
  *
  *  v1 Accounts (`stripe.accounts.create`) are no longer accepted for new Connect
  *  integrations — see https://docs.stripe.com/connect/accounts-v2/account-creation. */
 export async function createConnectOnboardingLink(
-  userId: string,
+  owner: ConnectOwner,
   returnUrl: string,
   refreshUrl: string = returnUrl
 ): Promise<{ url: string }> {
@@ -226,13 +282,24 @@ export async function createConnectOnboardingLink(
   const db = getDb();
   if (!stripe || !db) throw new Error("payments not configured");
 
-  const [user] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
-  if (!user) throw new Error("user not found");
+  let accountId: string | null;
+  let contactEmail: string | undefined;
+  if (owner.kind === "org") {
+    const [org] = await db.select().from(organizations).where(eq(organizations.handle, owner.orgHandle)).limit(1);
+    if (!org) throw new Error("organization not found");
+    accountId = org.stripeAccountId;
+    // Organizations have no email of their own (users.bio-style profile fields
+    // only) — Stripe collects a business contact email during onboarding itself.
+  } else {
+    const [user] = await db.select().from(users).where(eq(users.id, owner.userId)).limit(1);
+    if (!user) throw new Error("user not found");
+    accountId = user.stripeAccountId;
+    contactEmail = user.email ?? undefined;
+  }
 
-  let accountId = user.stripeAccountId;
   if (!accountId) {
     const account = await stripe.v2.core.accounts.create({
-      contact_email: user.email ?? undefined,
+      contact_email: contactEmail,
       dashboard: "express",
       defaults: {
         responsibilities: {
@@ -258,7 +325,11 @@ export async function createConnectOnboardingLink(
       include: ["configuration.recipient", "requirements"],
     });
     accountId = account.id;
-    await db.update(users).set({ stripeAccountId: accountId }).where(eq(users.id, userId));
+    if (owner.kind === "org") {
+      await db.update(organizations).set({ stripeAccountId: accountId }).where(eq(organizations.handle, owner.orgHandle));
+    } else {
+      await db.update(users).set({ stripeAccountId: accountId }).where(eq(users.id, owner.userId));
+    }
   }
 
   const link = await stripe.v2.core.accountLinks.create({

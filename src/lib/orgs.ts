@@ -288,6 +288,35 @@ export async function listOrgsForMember(userId: string): Promise<MemberOrgSummar
   }
 }
 
+export interface OrgPayoutStatus {
+  stripeAccountId: string | null;
+  stripeOnboarded: boolean;
+}
+
+/**
+ * Stripe Connect status for `handle` — owner/admin-only information (unlike
+ * the rest of an org's profile, which is public), so every caller must check
+ * membership itself before showing this (see the "Payouts" section on
+ * `/settings/orgs`, gated on `role === "owner" || "admin"` same as the
+ * Connect-onboarding route itself). Null when the org/DB doesn't exist or
+ * isn't configured.
+ */
+export async function getOrgPayoutStatus(handle: string): Promise<OrgPayoutStatus | null> {
+  const db = getDb();
+  if (!db) return null;
+
+  try {
+    const [org] = await db
+      .select({ stripeAccountId: organizations.stripeAccountId, stripeOnboarded: organizations.stripeOnboarded })
+      .from(organizations)
+      .where(eq(organizations.handle, handle))
+      .limit(1);
+    return org ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /** The caller's role in `orgHandle`, or null when they aren't a member (or
  *  the org/DB doesn't exist/isn't configured). The building block every
  *  owner/admin gate in this module (and `access.ts`'s `isPackageOwner`) is

@@ -3,7 +3,7 @@ import type Stripe from "stripe";
 import { getConnectedAccountStatus, getStripe, isStripeEnabled, subscriptionPeriodEnd } from "@/lib/stripe";
 import { eq } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
-import { users } from "@/lib/db/schema";
+import { organizations, users } from "@/lib/db/schema";
 import {
   cancelSubscriptionPurchase,
   extendSubscriptionPeriod,
@@ -82,10 +82,18 @@ export async function POST(req: NextRequest) {
         const db = getDb();
         if (db && accountId) {
           const status = await getConnectedAccountStatus(accountId);
-          await db
-            .update(users)
-            .set({ stripeOnboarded: status.onboarded })
-            .where(eq(users.stripeAccountId, accountId));
+          // The account belongs to exactly one of these two tables — a plain
+          // handle can't be both a user and an org (see reserved.ts's
+          // isHandleTaken) — so running both updates unconditionally rather
+          // than looking up which one first is one query instead of two, and
+          // the one that doesn't match simply affects zero rows.
+          await Promise.all([
+            db.update(users).set({ stripeOnboarded: status.onboarded }).where(eq(users.stripeAccountId, accountId)),
+            db
+              .update(organizations)
+              .set({ stripeOnboarded: status.onboarded })
+              .where(eq(organizations.stripeAccountId, accountId)),
+          ]);
         }
       }
     } catch {
@@ -324,10 +332,11 @@ export async function POST(req: NextRequest) {
     const hasBooleanFlags =
       typeof account.charges_enabled === "boolean" && typeof account.details_submitted === "boolean";
     if (db && account.id && hasBooleanFlags) {
-      await db
-        .update(users)
-        .set({ stripeOnboarded: Boolean(account.charges_enabled && account.details_submitted) })
-        .where(eq(users.stripeAccountId, account.id));
+      const onboarded = Boolean(account.charges_enabled && account.details_submitted);
+      await Promise.all([
+        db.update(users).set({ stripeOnboarded: onboarded }).where(eq(users.stripeAccountId, account.id)),
+        db.update(organizations).set({ stripeOnboarded: onboarded }).where(eq(organizations.stripeAccountId, account.id)),
+      ]);
     }
   }
 

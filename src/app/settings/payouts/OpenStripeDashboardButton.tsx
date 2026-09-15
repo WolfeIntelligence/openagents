@@ -4,14 +4,19 @@ import { useState } from "react";
 
 /** Fetches a fresh Stripe Express Dashboard login link and redirects to it. Mirrors
  *  `ConnectStripeButton`'s fetch/redirect shape, against `./login-link` instead of
- *  `/api/connect/onboard`. */
-export function OpenStripeDashboardButton({ className = "" }: { className?: string }) {
+ *  `/api/connect/onboard`. Pass `org` to open an organization's dashboard instead of
+ *  the signed-in user's own (same owner/admin gate as `ConnectStripeButton`'s `org`). */
+export function OpenStripeDashboardButton({ className = "", org }: { className?: string; org?: string }) {
   const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
 
   async function handleClick() {
     setStatus("loading");
     try {
-      const res = await fetch("/settings/payouts/login-link", { method: "POST" });
+      const res = await fetch("/settings/payouts/login-link", {
+        method: "POST",
+        headers: org ? { "Content-Type": "application/json" } : undefined,
+        body: org ? JSON.stringify({ org }) : undefined,
+      });
       if (!res.ok) {
         setStatus("error");
         return;

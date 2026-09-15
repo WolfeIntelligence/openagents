@@ -13,6 +13,7 @@ import { invalidateCatalogCache } from "@/lib/catalog/cache";
 import { getMemberRole } from "@/lib/orgs";
 import { checkMachineOwner } from "@/lib/machine";
 import { scanPackage, type ScanResult } from "@/lib/scan";
+import { canReceivePayments, resolveSellerAccount } from "@/lib/stripe";
 
 /** New packages at or above this score are held for review regardless of
  *  `REQUIRE_REVIEW`; an existing package's new version at or above it goes out
@@ -286,14 +287,20 @@ export async function publishPackage({
   }
 
   if (manifest.pricing.model !== "free") {
-    const [seller] = await db
-      .select({ stripeOnboarded: users.stripeOnboarded })
-      .from(users)
-      .where(eq(users.handle, userHandle))
-      .limit(1);
-    if (!seller?.stripeOnboarded) {
+    // Gate on *this package's actual owner* — the org's own connected account for
+    // an org-owned package, not whichever member happens to be publishing. Using
+    // the publishing member's personal onboarding here (as this used to) let
+    // anyone with their own Stripe account onboarded publish a paid package under
+    // an org that had never connected one at all, which checkout could then never
+    // actually charge for (createCheckoutSession resolves the same owner/ownerType
+    // via resolveSellerAccount, so the two are now guaranteed to agree).
+    const seller = await resolveSellerAccount(db, manifest.owner, ownerType);
+    if (!canReceivePayments(seller)) {
+      const target = ownerType === "org" ? `the "${manifest.owner}" organization` : "your account";
       throw new PublishError(400, [
-        "Connect Stripe payouts before publishing a paid package (Settings → Payouts).",
+        `Connect Stripe payouts for ${target} before publishing a paid package (${
+          ownerType === "org" ? "Settings → Organizations" : "Settings → Payouts"
+        }).`,
       ]);
     }
   }
