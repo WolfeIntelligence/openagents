@@ -10,6 +10,7 @@ import {
   shouldQuery,
   buildSuggestUrl,
   shapeSuggestions,
+  suggestionAnnouncement,
   createSuggestionFetcher,
   reduceShortcutKey,
   INITIAL_SHORTCUT_STATE,
@@ -96,6 +97,32 @@ test("shapeSuggestions never throws on garbage input", () => {
   }
   assert.deepEqual(shapeSuggestions(null), { items: [], total: 0 });
   assert.deepEqual(shapeSuggestions(undefined), { items: [], total: 0 });
+});
+
+// ---------------------------------------------------------------------------
+// suggestionAnnouncement (aria-live text for the suggestion count)
+// ---------------------------------------------------------------------------
+
+test("suggestionAnnouncement is empty for null (too-short query or error)", () => {
+  assert.equal(suggestionAnnouncement(null), "");
+});
+
+test("suggestionAnnouncement is empty when there are zero items", () => {
+  assert.equal(suggestionAnnouncement({ items: [], total: 0 }), "");
+});
+
+test("suggestionAnnouncement uses singular wording for exactly one suggestion", () => {
+  assert.equal(suggestionAnnouncement({ items: [VALID_ITEM], total: 1 }), "1 suggestion available");
+});
+
+test("suggestionAnnouncement uses plural wording when shown equals total", () => {
+  const items = [VALID_ITEM, { ...VALID_ITEM, id: "acme/other", name: "other" }];
+  assert.equal(suggestionAnnouncement({ items, total: 2 }), "2 suggestions available");
+});
+
+test("suggestionAnnouncement calls out the fuller result count when more exist than are shown", () => {
+  const items = [VALID_ITEM];
+  assert.equal(suggestionAnnouncement({ items, total: 12 }), "1 suggestion, 12 results total");
 });
 
 // ---------------------------------------------------------------------------

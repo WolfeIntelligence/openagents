@@ -72,6 +72,23 @@ export function shapeSuggestions(raw: unknown): SuggestResult {
   return correctedQuery ? { items, total, correctedQuery } : { items, total };
 }
 
+/**
+ * Text for a visually-hidden `aria-live` region announcing how many
+ * suggestions just loaded, so a screen reader user gets the same count a
+ * sighted user sees rendered by `SearchSuggestions` without needing to
+ * navigate into the listbox first. Empty string means "announce nothing" —
+ * used for no result and for the too-short/error `null` case alike, since
+ * the dropdown itself renders nothing then either (see `SearchBox`).
+ */
+export function suggestionAnnouncement(result: SuggestResult | null): string {
+  if (!result || result.items.length === 0) return "";
+  const shown = result.items.length;
+  const noun = shown === 1 ? "suggestion" : "suggestions";
+  return result.total > shown
+    ? `${shown} ${noun}, ${result.total} results total`
+    : `${shown} ${noun} available`;
+}
+
 export type SuggestListener = (result: SuggestResult | null) => void;
 
 /**
