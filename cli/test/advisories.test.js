@@ -228,4 +228,63 @@ describe("add: security advisories", () => {
     assert.equal(calls.length, 1);
     assert.ok(logs.some((l) => l.includes("could not check advisories")));
   });
+
+  test("a critical advisory on a transitive dependency refuses to install the whole plan (exit 1)", async () => {
+    const dir = tmpProjectDir();
+    routes.set(`${REGISTRY}/api/v1/packages/a/b`, pkgDetail({ owner: "a", name: "b", version: "1.0.0", requires: ["c/d"] }));
+    routes.set(`${REGISTRY}/api/v1/packages/a/b/advisories`, advisoriesResponse([]));
+    routes.set(`${REGISTRY}/api/v1/packages/c/d`, pkgDetail({ owner: "c", name: "d", version: "1.0.0" }));
+    routes.set(
+      `${REGISTRY}/api/v1/packages/c/d/advisories`,
+      advisoriesResponse([
+        {
+          id: "adv1",
+          severity: "critical",
+          title: "Exfiltrates AWS credentials",
+          body: "details",
+          affectedVersions: null,
+          fixedInVersion: null,
+          withdrawnAt: null,
+        },
+      ])
+    );
+
+    const calls = [];
+    await run({ _: ["a/b"], registry: REGISTRY, dir }, { installFn: fakeInstall(calls) });
+
+    assert.equal(process.exitCode, 1);
+    assert.equal(calls.length, 0, "neither the root nor the dependency should install when refused");
+    assert.ok(logs.some((l) => l.includes("refusing to install")));
+    assert.ok(logs.some((l) => l.includes("c/d@1.0.0")));
+    assert.ok(logs.some((l) => l.includes("--force")));
+  });
+
+  test("a moderate/high advisory on a transitive dependency is printed with why it's installed, and does not block", async () => {
+    const dir = tmpProjectDir();
+    routes.set(`${REGISTRY}/api/v1/packages/a/b`, pkgDetail({ owner: "a", name: "b", version: "1.0.0", requires: ["c/d"] }));
+    routes.set(`${REGISTRY}/api/v1/packages/a/b/advisories`, advisoriesResponse([]));
+    routes.set(`${REGISTRY}/api/v1/packages/c/d`, pkgDetail({ owner: "c", name: "d", version: "1.0.0" }));
+    routes.set(
+      `${REGISTRY}/api/v1/packages/c/d/advisories`,
+      advisoriesResponse([
+        {
+          id: "adv1",
+          severity: "moderate",
+          title: "Logs verbosely",
+          body: "details",
+          affectedVersions: null,
+          fixedInVersion: null,
+          withdrawnAt: null,
+        },
+      ])
+    );
+
+    const calls = [];
+    await run({ _: ["a/b"], registry: REGISTRY, dir }, { installFn: fakeInstall(calls) });
+
+    assert.equal(process.exitCode, undefined);
+    assert.equal(calls.length, 2, "both the root and the dependency install");
+    assert.ok(logs.some((l) => l.includes("Security advisories for c/d@1.0.0 (required by a/b@1.0.0)")));
+    assert.ok(logs.some((l) => l.includes("[moderate] Logs verbosely")));
+  });
 });

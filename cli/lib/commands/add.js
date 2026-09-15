@@ -77,37 +77,55 @@ export async function run(args, { installFn = installPackage } = {}) {
   console.log(formatPlan(plan));
   console.log("");
 
-  // Z2: security advisories for the package the user explicitly asked to add
-  // (`plan[0]` is always the root — see buildPlan's doc comment in resolve.js).
-  // Fetched separately from the manifest/plan above since advisories aren't
-  // part of resolve.js's registry contract; this only covers the root, not
-  // transitive dependencies pulled in via `manifest.requires`.
+  // Z2/X6b: security advisories for every package resolved into the install
+  // plan — the root the user asked to add *and* every transitive dependency
+  // pulled in via `manifest.requires` (buildPlan already walked and resolved
+  // those in resolve.js; `plan[0]` is always the root). Fetched separately
+  // from the manifest/plan above since advisories aren't part of resolve.js's
+  // registry contract. One request per resolved package, run concurrently —
+  // the plan is small (dependency trees here are shallow) so this doesn't
+  // need its own batching.
   const root = plan[0];
   const force = Boolean(args.force);
-  let advisories = [];
-  try {
-    const res = await util.fetchJson(`${registry}/api/v1/packages/${owner}/${name}/advisories`, { runtime });
-    advisories = Array.isArray(res.items) ? res.items : [];
-  } catch (err) {
-    console.error(`⚠ could not check advisories for ${owner}/${name}: ${err.message}`);
-  }
-
-  const activeForVersion = advisories.filter(
-    (a) => !a.withdrawnAt && advisoryAffects(root.version, a.affectedVersions)
+  const advisoryResults = await Promise.all(
+    plan.map(async (entry) => {
+      const [pOwner, pName] = entry.id.split("/");
+      try {
+        const res = await util.fetchJson(`${registry}/api/v1/packages/${pOwner}/${pName}/advisories`, { runtime });
+        return { entry, items: Array.isArray(res.items) ? res.items : [] };
+      } catch (err) {
+        console.error(`⚠ could not check advisories for ${entry.id}: ${err.message}`);
+        return { entry, items: [] };
+      }
+    })
   );
-  if (activeForVersion.length > 0) {
-    console.log(`Security advisories for ${owner}/${name}@${root.version}:`);
-    for (const a of activeForVersion) {
+
+  const activeByPackage = advisoryResults
+    .map(({ entry, items }) => ({
+      entry,
+      active: items.filter((a) => !a.withdrawnAt && advisoryAffects(entry.version, a.affectedVersions)),
+    }))
+    .filter(({ active }) => active.length > 0);
+
+  for (const { entry, active } of activeByPackage) {
+    // The root's own reason is the literal string "requested" (see
+    // resolve.js); only annotate transitive dependencies with why they're
+    // here, so the root's line matches what it looked like before this only
+    // covered the root.
+    const suffix = entry === root ? "" : ` (${entry.reason})`;
+    console.log(`Security advisories for ${entry.id}@${entry.version}${suffix}:`);
+    for (const a of active) {
       const fixed = a.fixedInVersion ? ` (fixed in v${a.fixedInVersion})` : "";
       console.log(`  [${a.severity}] ${a.title}${fixed}`);
     }
     console.log("");
   }
 
-  const critical = activeForVersion.filter((a) => a.severity === "critical");
-  if (critical.length > 0 && !force) {
+  const criticalPackages = activeByPackage.filter(({ active }) => active.some((a) => a.severity === "critical"));
+  if (criticalPackages.length > 0 && !force) {
+    const names = criticalPackages.map(({ entry }) => `${entry.id}@${entry.version}`).join(", ");
     console.error(
-      `✗ refusing to install ${owner}/${name}@${root.version}: ${critical.length} critical advisor${critical.length === 1 ? "y" : "ies"} affect${critical.length === 1 ? "s" : ""} this version. Re-run with --force to install anyway.`
+      `✗ refusing to install: critical security advisories affect ${names} in the dependency tree. Re-run with --force to install anyway.`
     );
     process.exitCode = 1;
     return;
